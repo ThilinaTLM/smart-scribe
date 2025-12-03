@@ -1,6 +1,7 @@
 import { TranscribeRecordingUseCase } from "../application/use-cases/transcribe-recording"
 import { WaylandClipboardAdapter } from "../infrastructure/clipboard/clipboard.adapter"
 import { loadEnvironment } from "../infrastructure/config/environment"
+import { WtypeKeystrokeAdapter } from "../infrastructure/keystroke/wtype.adapter"
 import { FFmpegRecorderAdapter } from "../infrastructure/recording/ffmpeg-recorder.adapter"
 import { GeminiTranscriptionAdapter } from "../infrastructure/transcription/gemini-transcription.adapter"
 import {
@@ -66,13 +67,19 @@ export class App {
     // Create infrastructure adapters
     const recorder = new FFmpegRecorderAdapter()
     const transcriber = new GeminiTranscriptionAdapter(env.geminiApiKey)
-    const clipboard = new WaylandClipboardAdapter()
+    const clipboard = options.clipboard
+      ? new WaylandClipboardAdapter()
+      : undefined
+    const keystroke = options.keystroke
+      ? new WtypeKeystrokeAdapter()
+      : undefined
 
     // Create use case
     this.useCase = new TranscribeRecordingUseCase(
       recorder,
       transcriber,
       clipboard,
+      keystroke,
     )
 
     // Setup signal handler to stop recording on Ctrl+C
@@ -104,6 +111,8 @@ export class App {
     const result = await this.useCase.execute({
       duration: options.duration,
       domainId: options.domainId,
+      enableClipboard: options.clipboard,
+      enableKeystroke: options.keystroke,
 
       onRecordingStart: () => {
         this.presenter.startSpinner(
@@ -136,6 +145,14 @@ export class App {
           this.presenter.success("Copied to clipboard")
         } else {
           this.presenter.warn("Could not copy to clipboard")
+        }
+      },
+
+      onKeystrokeSend: (success) => {
+        if (success) {
+          this.presenter.success("Typed into focused window")
+        } else {
+          this.presenter.warn("Could not type into window")
         }
       },
     })

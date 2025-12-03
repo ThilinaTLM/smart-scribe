@@ -1,4 +1,4 @@
-import { parseArgs } from "node:util"
+import { parseArgs } from 'node:util';
 import { Duration } from "../domain/recording/value-objects/duration.vo"
 import { Result } from "../domain/shared/result"
 import {
@@ -21,6 +21,8 @@ export const EXIT_CODES = {
 export interface CliOptions {
   duration: Duration
   domainId: DomainId
+  clipboard: boolean
+  keystroke: boolean
   help: boolean
   version: boolean
 }
@@ -57,14 +59,18 @@ OPTIONS:
                              Formats: 30s, 1m, 2m30s
     -D, --domain <DOMAIN>    Domain preset (default: general)
                              Options: ${domains}
+    -c, --clipboard          Copy transcription to clipboard
+    -k, --keystroke          Type transcription into focused window
     -h, --help               Show this help message
     -v, --version            Show version
 
 EXAMPLES:
-    smart-scribe                     # 10s general transcription
-    smart-scribe -d 60s              # 60 second recording
-    smart-scribe -d 1m -D dev        # 1 minute, software domain
-    smart-scribe --duration 2m --domain medical
+    smart-scribe                     # 10s transcription to stdout only
+    smart-scribe -c                  # Copy result to clipboard
+    smart-scribe -k                  # Type result into focused window
+    smart-scribe -c -k               # Both clipboard and keystroke
+    smart-scribe -d 60s -c           # 60 second recording + clipboard
+    smart-scribe -d 1m -D dev -k     # 1 minute, dev domain, keystroke
 
 DOMAINS:
     general   - General conversation (default)
@@ -74,7 +80,8 @@ DOMAINS:
     finance   - Financial terms and acronyms
 
 OUTPUT:
-    Transcribed text is written to stdout and copied to clipboard.
+    Transcribed text is always written to stdout.
+    Use -c to copy to clipboard, -k to type into focused window.
     Status messages are written to stderr.
 `.trim()
 }
@@ -91,6 +98,8 @@ export function parseCliArgs(
       options: {
         duration: { type: "string", short: "d", default: "10s" },
         domain: { type: "string", short: "D", default: "general" },
+        clipboard: { type: "boolean", short: "c", default: false },
+        keystroke: { type: "boolean", short: "k", default: false },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", short: "v", default: false },
       },
@@ -103,6 +112,8 @@ export function parseCliArgs(
       return Result.ok({
         duration: Duration.fromSeconds(10),
         domainId: "general",
+        clipboard: false,
+        keystroke: false,
         help: true,
         version: false,
       })
@@ -112,6 +123,8 @@ export function parseCliArgs(
       return Result.ok({
         duration: Duration.fromSeconds(10),
         domainId: "general",
+        clipboard: false,
+        keystroke: false,
         help: false,
         version: true,
       })
@@ -137,6 +150,8 @@ export function parseCliArgs(
     return Result.ok({
       duration: durationResult.value,
       domainId: domainValue,
+      clipboard: values.clipboard as boolean,
+      keystroke: values.keystroke as boolean,
       help: false,
       version: false,
     })

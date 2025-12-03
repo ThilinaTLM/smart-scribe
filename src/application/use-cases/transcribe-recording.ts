@@ -8,6 +8,7 @@ import type {
   RecordingProgressCallback,
 } from "../ports/audio-recorder.port"
 import type { ClipboardPort } from "../ports/clipboard.port"
+import type { KeystrokePort } from "../ports/keystroke.port"
 import type { TranscriptionPort } from "../ports/transcription.port"
 
 /**
@@ -16,12 +17,15 @@ import type { TranscriptionPort } from "../ports/transcription.port"
 export interface TranscribeRecordingInput {
   duration: Duration
   domainId: DomainId
+  enableClipboard?: boolean
+  enableKeystroke?: boolean
   onRecordingProgress?: RecordingProgressCallback
   onRecordingStart?: () => void
   onRecordingComplete?: () => void
   onTranscriptionStart?: () => void
   onTranscriptionComplete?: (text: string) => void
   onClipboardCopy?: (success: boolean) => void
+  onKeystrokeSend?: (success: boolean) => void
 }
 
 /**
@@ -30,6 +34,7 @@ export interface TranscribeRecordingInput {
 export interface TranscribeRecordingOutput {
   text: string
   clipboardCopied: boolean
+  keystrokeSent: boolean
 }
 
 /**
@@ -38,7 +43,11 @@ export interface TranscribeRecordingOutput {
 export class TranscribeRecordingError extends Error {
   constructor(
     message: string,
-    public readonly stage: "recording" | "transcription" | "clipboard",
+    public readonly stage:
+      | "recording"
+      | "transcription"
+      | "clipboard"
+      | "keystroke",
   ) {
     super(message)
     this.name = "TranscribeRecordingError"
@@ -47,13 +56,14 @@ export class TranscribeRecordingError extends Error {
 
 /**
  * Main use case: Record audio and transcribe it to text.
- * Orchestrates the recording, transcription, and clipboard operations.
+ * Orchestrates the recording, transcription, clipboard, and keystroke operations.
  */
 export class TranscribeRecordingUseCase {
   constructor(
     private readonly recorder: AudioRecorderPort,
     private readonly transcriber: TranscriptionPort,
-    private readonly clipboard: ClipboardPort,
+    private readonly clipboard?: ClipboardPort,
+    private readonly keystroke?: KeystrokePort,
   ) {}
 
   /**
@@ -105,16 +115,27 @@ export class TranscribeRecordingUseCase {
     const text = transcriptionResult.value
     input.onTranscriptionComplete?.(text)
 
-    // 4. Copy to clipboard
-    const clipboardResult = await this.clipboard.copy(text)
-    const clipboardCopied = clipboardResult.ok
+    // 4. Copy to clipboard (only if enabled)
+    let clipboardCopied = false
+    if (input.enableClipboard && this.clipboard) {
+      const clipboardResult = await this.clipboard.copy(text)
+      clipboardCopied = clipboardResult.ok
+      input.onClipboardCopy?.(clipboardCopied)
+    }
 
-    input.onClipboardCopy?.(clipboardCopied)
+    // 5. Type into focused window (only if enabled)
+    let keystrokeSent = false
+    if (input.enableKeystroke && this.keystroke) {
+      const keystrokeResult = await this.keystroke.type(text)
+      keystrokeSent = keystrokeResult.ok
+      input.onKeystrokeSend?.(keystrokeSent)
+    }
 
-    // Return success even if clipboard fails (it's secondary)
+    // Return success even if clipboard/keystroke fails (they're secondary)
     return Result.ok({
       text,
       clipboardCopied,
+      keystrokeSent,
     })
   }
 

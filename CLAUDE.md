@@ -12,6 +12,9 @@ SmartScribe-TS is a Bun-based TypeScript CLI tool for AI-powered audio transcrip
 bun install              # Install dependencies
 bun run src/index.ts     # Run the CLI directly
 smart-scribe -h          # Show help (after linking: bun link)
+
+bun run check            # Lint + format check (Biome)
+bun run check:fix        # Auto-fix lint + format issues
 ```
 
 ## Environment Setup
