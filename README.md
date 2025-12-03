@@ -71,9 +71,16 @@ smart-scribe --daemon --max-duration 5m  # 5 minute max recording
 Control the daemon with signals:
 
 ```bash
-kill -SIGUSR1 $(cat /tmp/smart-scribe.pid)   # Start recording
-kill -SIGUSR2 $(cat /tmp/smart-scribe.pid)   # Stop and transcribe
-kill -SIGINT  $(cat /tmp/smart-scribe.pid)   # Cancel or exit
+kill -SIGUSR1 $(cat /tmp/smart-scribe.pid)   # Toggle (start or stop+transcribe)
+kill -SIGUSR2 $(cat /tmp/smart-scribe.pid)   # Cancel recording
+kill -SIGINT  $(cat /tmp/smart-scribe.pid)   # Exit daemon
+```
+
+Or use the helper scripts (useful for binding to global hotkeys):
+
+```bash
+./scripts/signal-toggle.sh   # Toggle recording
+./scripts/signal-cancel.sh   # Cancel recording
 ```
 
 ## CLI Options
