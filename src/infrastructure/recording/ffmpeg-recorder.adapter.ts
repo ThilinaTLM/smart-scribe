@@ -5,18 +5,26 @@ import {
   RecordingError,
   type RecordingProgressCallback,
 } from "../../application/ports/audio-recorder.port"
+import type {
+  UnboundedProgressCallback,
+  UnboundedRecorderPort,
+} from "../../application/ports/unbounded-recorder.port"
 import type { Duration } from "../../domain/recording/value-objects/duration.vo"
 import { Result } from "../../domain/shared/result"
 import { AudioData } from "../../domain/transcription/value-objects/audio-data.vo"
 
 /**
  * FFmpeg-based audio recorder adapter for Pipewire/PulseAudio on Linux.
- * Implements the AudioRecorderPort interface.
+ * Implements both AudioRecorderPort (bounded) and UnboundedRecorderPort (daemon) interfaces.
  */
-export class FFmpegRecorderAdapter implements AudioRecorderPort {
+export class FFmpegRecorderAdapter
+  implements AudioRecorderPort, UnboundedRecorderPort
+{
   private currentProcess: ReturnType<typeof Bun.spawn> | null = null
   private outputPath: string = ""
   private shouldStop = false
+  private progressInterval: Timer | null = null
+  private maxDurationTimeout: Timer | null = null
 
   /**
    * Record audio from the microphone for the specified duration
@@ -160,6 +168,170 @@ export class FFmpegRecorderAdapter implements AudioRecorderPort {
       const message =
         error instanceof Error ? error.message : "Error reading recorded file"
       return Result.err(new RecordingError(message))
+    }
+  }
+
+  // ============================================
+  // UnboundedRecorderPort implementation
+  // ============================================
+
+  /**
+   * Start recording without a fixed duration (daemon mode).
+   * Recording continues until stopAndFinalize() or cancel() is called,
+   * or maxDuration is reached.
+   */
+  startRecording(
+    maxDuration: Duration,
+    onProgress?: UnboundedProgressCallback,
+    onMaxDurationReached?: () => void,
+  ): Result<void, RecordingError> {
+    if (this.currentProcess) {
+      return Result.err(new RecordingError("Recording already in progress"))
+    }
+
+    this.shouldStop = false
+    this.outputPath = join(tmpdir(), `smartscribe-${Date.now()}.mp3`)
+
+    try {
+      // FFmpeg command without -t flag (records indefinitely until stopped)
+      const args = [
+        "-f",
+        "pulse",
+        "-i",
+        "default",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "2",
+        "-y",
+        this.outputPath,
+      ]
+
+      this.currentProcess = Bun.spawn(["ffmpeg", ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+
+      // Start progress tracking
+      const startTime = Date.now()
+      if (onProgress) {
+        this.progressInterval = setInterval(() => {
+          const elapsed = (Date.now() - startTime) / 1000
+          onProgress(elapsed)
+        }, 100)
+      }
+
+      // Set max duration timeout
+      const maxDurationMs = maxDuration.toSeconds() * 1000
+      this.maxDurationTimeout = setTimeout(() => {
+        if (this.currentProcess && onMaxDurationReached) {
+          onMaxDurationReached()
+        }
+      }, maxDurationMs)
+
+      return Result.ok(undefined)
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unknown error starting recording"
+      return Result.err(new RecordingError(message))
+    }
+  }
+
+  /**
+   * Stop recording gracefully and return the recorded audio.
+   */
+  async stopAndFinalize(): Promise<Result<AudioData, RecordingError>> {
+    this.clearTimers()
+
+    if (!this.currentProcess) {
+      return Result.err(new RecordingError("No recording in progress"))
+    }
+
+    this.shouldStop = true
+
+    try {
+      // Send SIGINT to gracefully stop FFmpeg (it will finalize the file)
+      this.currentProcess.kill("SIGINT")
+
+      // Wait for process to finish
+      await this.currentProcess.exited
+
+      // Read the recorded audio
+      const result = await this.readRecordedFile()
+
+      this.currentProcess = null
+      return result
+    } catch (error) {
+      this.currentProcess = null
+      const message =
+        error instanceof Error ? error.message : "Error stopping recording"
+      return Result.err(new RecordingError(message))
+    }
+  }
+
+  /**
+   * Cancel recording and discard output (no transcription).
+   */
+  async cancel(): Promise<Result<void, RecordingError>> {
+    this.clearTimers()
+
+    if (!this.currentProcess) {
+      return Result.ok(undefined)
+    }
+
+    this.shouldStop = true
+
+    try {
+      // Send SIGKILL for immediate termination
+      this.currentProcess.kill("SIGKILL")
+
+      // Wait for process to finish
+      await this.currentProcess.exited
+
+      // Clean up temp file without reading
+      try {
+        const file = Bun.file(this.outputPath)
+        if (await file.exists()) {
+          await Bun.write(this.outputPath, "")
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      this.currentProcess = null
+      return Result.ok(undefined)
+    } catch (error) {
+      this.currentProcess = null
+      const message =
+        error instanceof Error ? error.message : "Error cancelling recording"
+      return Result.err(new RecordingError(message))
+    }
+  }
+
+  /**
+   * Check if recording is currently in progress
+   */
+  isRecording(): boolean {
+    return this.currentProcess !== null
+  }
+
+  /**
+   * Clear progress and timeout timers
+   */
+  private clearTimers(): void {
+    if (this.progressInterval) {
+      clearInterval(this.progressInterval)
+      this.progressInterval = null
+    }
+    if (this.maxDurationTimeout) {
+      clearTimeout(this.maxDurationTimeout)
+      this.maxDurationTimeout = null
     }
   }
 }

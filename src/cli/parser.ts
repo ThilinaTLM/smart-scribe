@@ -16,9 +16,10 @@ export const EXIT_CODES = {
 } as const
 
 /**
- * Parsed CLI options
+ * Parsed CLI options for one-shot mode
  */
 export interface CliOptions {
+  mode: "oneshot"
   duration: Duration
   domainId: DomainId
   clipboard: boolean
@@ -27,6 +28,23 @@ export interface CliOptions {
   help: boolean
   version: boolean
 }
+
+/**
+ * Parsed CLI options for daemon mode
+ */
+export interface DaemonCliOptions {
+  mode: "daemon"
+  maxDuration: Duration
+  domainId: DomainId
+  clipboard: boolean
+  keystroke: boolean
+  notify: boolean
+}
+
+/**
+ * Union of all CLI option types
+ */
+export type ParsedCliOptions = CliOptions | DaemonCliOptions
 
 /**
  * CLI parsing error
@@ -54,10 +72,18 @@ smart-scribe - AI-powered voice to text transcription
 
 USAGE:
     smart-scribe [OPTIONS]
+    smart-scribe --daemon [OPTIONS]
 
-OPTIONS:
+ONE-SHOT MODE OPTIONS:
     -d, --duration <TIME>    Recording duration (default: 10s)
                              Formats: 30s, 1m, 2m30s
+
+DAEMON MODE OPTIONS:
+    --daemon                 Run as daemon, controlled by signals
+    --max-duration <TIME>    Max recording duration (default: 60s)
+                             Auto-stops and transcribes when reached
+
+COMMON OPTIONS:
     -D, --domain <DOMAIN>    Domain preset (default: general)
                              Options: ${domains}
     -c, --clipboard          Copy transcription to clipboard
@@ -66,13 +92,21 @@ OPTIONS:
     -h, --help               Show this help message
     -v, --version            Show version
 
-EXAMPLES:
+ONE-SHOT EXAMPLES:
     smart-scribe                     # 10s transcription to stdout only
     smart-scribe -c                  # Copy result to clipboard
-    smart-scribe -k                  # Type result into focused window
-    smart-scribe -c -k               # Both clipboard and keystroke
     smart-scribe -d 60s -c           # 60 second recording + clipboard
     smart-scribe -d 1m -D dev -k     # 1 minute, dev domain, keystroke
+
+DAEMON EXAMPLES:
+    smart-scribe --daemon -c -n      # Daemon with clipboard + notifications
+    smart-scribe --daemon -D dev     # Daemon with dev domain
+    smart-scribe --daemon --max-duration 5m  # 5 minute max recording
+
+DAEMON SIGNALS:
+    SIGUSR1  Start recording
+    SIGUSR2  Stop recording and transcribe
+    SIGINT   Cancel recording (or exit if idle)
 
 DOMAINS:
     general   - General conversation (default)
@@ -93,7 +127,7 @@ OUTPUT:
  */
 export function parseCliArgs(
   argv: string[],
-): Result<CliOptions, CliParseError> {
+): Result<ParsedCliOptions, CliParseError> {
   try {
     const { values } = parseArgs({
       args: argv,
@@ -105,6 +139,8 @@ export function parseCliArgs(
         notify: { type: "boolean", short: "n", default: false },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", short: "v", default: false },
+        daemon: { type: "boolean", default: false },
+        "max-duration": { type: "string", default: "60s" },
       },
       strict: true,
       allowPositionals: true,
@@ -113,6 +149,7 @@ export function parseCliArgs(
     // Check for help/version first
     if (values.help) {
       return Result.ok({
+        mode: "oneshot",
         duration: Duration.fromSeconds(10),
         domainId: "general",
         clipboard: false,
@@ -125,6 +162,7 @@ export function parseCliArgs(
 
     if (values.version) {
       return Result.ok({
+        mode: "oneshot",
         duration: Duration.fromSeconds(10),
         domainId: "general",
         clipboard: false,
@@ -135,13 +173,7 @@ export function parseCliArgs(
       })
     }
 
-    // Parse duration
-    const durationResult = Duration.parse(values.duration as string)
-    if (!durationResult.ok) {
-      return Result.err(new CliParseError(durationResult.error.message))
-    }
-
-    // Validate domain
+    // Validate domain (common to both modes)
     const domainValue = values.domain as string
     if (!DomainPreset.isValidId(domainValue)) {
       const validDomains = DomainPreset.getAllIds().join(", ")
@@ -152,7 +184,44 @@ export function parseCliArgs(
       )
     }
 
+    // Check for daemon mode
+    if (values.daemon) {
+      // Validate mutual exclusivity: daemon + custom duration is an error
+      const durationProvided = argv.some(
+        (arg) => arg === "-d" || arg.startsWith("--duration"),
+      )
+      if (durationProvided) {
+        return Result.err(
+          new CliParseError(
+            "--daemon and --duration are mutually exclusive. Use --max-duration with daemon mode.",
+          ),
+        )
+      }
+
+      // Parse max duration
+      const maxDurationResult = Duration.parse(values["max-duration"] as string)
+      if (!maxDurationResult.ok) {
+        return Result.err(new CliParseError(maxDurationResult.error.message))
+      }
+
+      return Result.ok({
+        mode: "daemon",
+        maxDuration: maxDurationResult.value,
+        domainId: domainValue,
+        clipboard: values.clipboard as boolean,
+        keystroke: values.keystroke as boolean,
+        notify: values.notify as boolean,
+      })
+    }
+
+    // One-shot mode: Parse duration
+    const durationResult = Duration.parse(values.duration as string)
+    if (!durationResult.ok) {
+      return Result.err(new CliParseError(durationResult.error.message))
+    }
+
     return Result.ok({
+      mode: "oneshot",
       duration: durationResult.value,
       domainId: domainValue,
       clipboard: values.clipboard as boolean,
