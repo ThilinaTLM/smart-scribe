@@ -101,8 +101,8 @@ export class DaemonApp {
         )
       },
 
-      onRecordingStop: () => {
-        this.presenter.info("Recording stopped, transcribing...")
+      onRecordingStop: (audioSize) => {
+        this.presenter.info(`Recording stopped (${audioSize}), transcribing...`)
       },
 
       onRecordingCancel: () => {

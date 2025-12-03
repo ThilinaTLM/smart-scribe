@@ -200,8 +200,8 @@ export class App {
         }
       },
 
-      onRecordingComplete: () => {
-        this.presenter.spinnerSuccess("Recording complete")
+      onRecordingComplete: (audioSize) => {
+        this.presenter.spinnerSuccess(`Recording complete (${audioSize})`)
       },
 
       onTranscriptionStart: () => {

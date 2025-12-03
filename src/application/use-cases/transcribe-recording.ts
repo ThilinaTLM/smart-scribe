@@ -21,7 +21,7 @@ export interface TranscribeRecordingInput {
   enableKeystroke?: boolean
   onRecordingProgress?: RecordingProgressCallback
   onRecordingStart?: () => void
-  onRecordingComplete?: () => void
+  onRecordingComplete?: (audioSize: string) => void
   onTranscriptionStart?: () => void
   onTranscriptionComplete?: (text: string) => void
   onClipboardCopy?: (success: boolean) => void
@@ -89,7 +89,7 @@ export class TranscribeRecordingUseCase {
       )
     }
 
-    input.onRecordingComplete?.()
+    input.onRecordingComplete?.(recordingResult.value.humanReadableSize)
 
     // 2. Build system prompt with domain context
     const domainPreset = DomainPreset.fromId(input.domainId)

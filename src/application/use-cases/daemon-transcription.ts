@@ -28,7 +28,7 @@ export interface DaemonEventCallbacks {
   onRecordingStart?: () => void
   onRecordingProgress?: (elapsedSeconds: number) => void
   onMaxDurationReached?: () => void
-  onRecordingStop?: () => void
+  onRecordingStop?: (audioSize: string) => void
   onRecordingCancel?: () => void
   onTranscriptionStart?: () => void
   onTranscriptionComplete?: (text: string) => void
@@ -155,7 +155,6 @@ export class DaemonTranscriptionUseCase {
     }
 
     this.callbacks.onStateChange?.(this.session.state)
-    this.callbacks.onRecordingStop?.()
 
     // Stop recording and get audio
     const audioResult = await this.recorder.stopAndFinalize()
@@ -166,6 +165,8 @@ export class DaemonTranscriptionUseCase {
         new DaemonTranscriptionError(audioResult.error.message, "recording"),
       )
     }
+
+    this.callbacks.onRecordingStop?.(audioResult.value.humanReadableSize)
 
     // Transcribe
     this.callbacks.onTranscriptionStart?.()

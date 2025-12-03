@@ -35,7 +35,7 @@ export class FFmpegRecorderAdapter
   ): Promise<Result<AudioData, RecordingError>> {
     this.shouldStop = false
     const durationSeconds = duration.toSeconds()
-    this.outputPath = join(tmpdir(), `smartscribe-${Date.now()}.mp3`)
+    this.outputPath = join(tmpdir(), `smartscribe-${Date.now()}.ogg`)
 
     try {
       // FFmpeg command for Pipewire/PulseAudio recording
@@ -44,8 +44,9 @@ export class FFmpegRecorderAdapter
       // -t: Recording duration
       // -ar 16000: 16kHz sample rate (good for speech)
       // -ac 1: Mono audio
-      // -c:a libmp3lame: MP3 encoding
-      // -q:a 2: Good quality
+      // -c:a libopus: Opus codec (optimized for speech, efficient at low bitrates)
+      // -b:a 16k: 16kbps bitrate (matches Gemini's internal 16kbps resolution)
+      // -application voip: Optimize Opus for voice
       // -y: Overwrite output file
       const args = [
         "-f",
@@ -59,9 +60,11 @@ export class FFmpegRecorderAdapter
         "-ac",
         "1",
         "-c:a",
-        "libmp3lame",
-        "-q:a",
-        "2",
+        "libopus",
+        "-b:a",
+        "16k",
+        "-application",
+        "voip",
         "-y",
         this.outputPath,
       ]
@@ -163,7 +166,7 @@ export class FFmpegRecorderAdapter
       await Bun.write(this.outputPath, "") // Empty the file
       // Note: In production, you might want to actually delete the file
 
-      return Result.ok(AudioData.fromBuffer(buffer, "audio/mp3"))
+      return Result.ok(AudioData.fromBuffer(buffer, "audio/ogg"))
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Error reading recorded file"
@@ -190,10 +193,11 @@ export class FFmpegRecorderAdapter
     }
 
     this.shouldStop = false
-    this.outputPath = join(tmpdir(), `smartscribe-${Date.now()}.mp3`)
+    this.outputPath = join(tmpdir(), `smartscribe-${Date.now()}.ogg`)
 
     try {
       // FFmpeg command without -t flag (records indefinitely until stopped)
+      // Uses Opus codec at 16kbps for optimal Gemini compatibility
       const args = [
         "-f",
         "pulse",
@@ -204,9 +208,11 @@ export class FFmpegRecorderAdapter
         "-ac",
         "1",
         "-c:a",
-        "libmp3lame",
-        "-q:a",
-        "2",
+        "libopus",
+        "-b:a",
+        "16k",
+        "-application",
+        "voip",
         "-y",
         this.outputPath,
       ]
