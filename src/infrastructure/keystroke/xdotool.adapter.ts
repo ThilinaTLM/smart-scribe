@@ -5,17 +5,17 @@ import {
 import { Result } from "../../domain/shared/result"
 
 /**
- * Wayland keystroke adapter using wtype.
+ * X11 keystroke adapter using xdotool.
  * Implements the KeystrokePort interface.
  */
-export class WtypeKeystrokeAdapter implements KeystrokePort {
+export class XdotoolKeystrokeAdapter implements KeystrokePort {
   /**
-   * Type text into the focused application using wtype
+   * Type text into the focused application using xdotool
    */
   async type(text: string): Promise<Result<void, KeystrokeError>> {
     try {
-      // Use wtype for Wayland keystroke injection
-      const proc = Bun.spawn(["wtype", "--", text], {
+      // Use xdotool for X11 keystroke injection
+      const proc = Bun.spawn(["xdotool", "type", "--", text], {
         stdout: "pipe",
         stderr: "pipe",
       })
@@ -26,8 +26,8 @@ export class WtypeKeystrokeAdapter implements KeystrokePort {
         const stderr = await new Response(proc.stderr).text()
         return Result.err(
           new KeystrokeError(
-            `wtype failed (exit code ${exitCode}): ${stderr}. ` +
-              "Make sure wtype is installed: sudo pacman -S wtype",
+            `xdotool failed (exit code ${exitCode}): ${stderr}. ` +
+              "Make sure xdotool is installed: sudo pacman -S xdotool",
           ),
         )
       }
@@ -41,7 +41,7 @@ export class WtypeKeystrokeAdapter implements KeystrokePort {
       if (message.includes("ENOENT") || message.includes("not found")) {
         return Result.err(
           new KeystrokeError(
-            "wtype not found. Install wtype: sudo pacman -S wtype",
+            "xdotool not found. Install xdotool: sudo pacman -S xdotool",
           ),
         )
       }

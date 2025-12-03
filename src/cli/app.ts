@@ -1,7 +1,9 @@
+import type { NotificationPort } from "../application/ports/notification.port"
 import { TranscribeRecordingUseCase } from "../application/use-cases/transcribe-recording"
 import { WaylandClipboardAdapter } from "../infrastructure/clipboard/clipboard.adapter"
 import { loadEnvironment } from "../infrastructure/config/environment"
-import { WtypeKeystrokeAdapter } from "../infrastructure/keystroke/wtype.adapter"
+import { XdotoolKeystrokeAdapter } from "../infrastructure/keystroke/xdotool.adapter"
+import { NotifySendAdapter } from "../infrastructure/notification/notify-send.adapter"
 import { FFmpegRecorderAdapter } from "../infrastructure/recording/ffmpeg-recorder.adapter"
 import { GeminiTranscriptionAdapter } from "../infrastructure/transcription/gemini-transcription.adapter"
 import {
@@ -22,6 +24,7 @@ export class App {
   private presenter: Presenter
   private signalHandler: SignalHandler
   private useCase: TranscribeRecordingUseCase | null = null
+  private notifier: NotificationPort | null = null
 
   constructor() {
     this.presenter = new Presenter()
@@ -71,8 +74,11 @@ export class App {
       ? new WaylandClipboardAdapter()
       : undefined
     const keystroke = options.keystroke
-      ? new WtypeKeystrokeAdapter()
+      ? new XdotoolKeystrokeAdapter()
       : undefined
+
+    // Create notifier if enabled
+    this.notifier = options.notify ? new NotifySendAdapter() : null
 
     // Create use case
     this.useCase = new TranscribeRecordingUseCase(
@@ -86,6 +92,11 @@ export class App {
     this.signalHandler.onCleanup(async () => {
       this.presenter.stopSpinner()
       this.presenter.info("Stopping...")
+      this.notifier?.notify(
+        "SmartScribe",
+        "Recording cancelled",
+        "dialog-warning",
+      )
       if (this.useCase) {
         await this.useCase.stopEarly()
       }
@@ -118,6 +129,11 @@ export class App {
         this.presenter.startSpinner(
           `Recording for ${durationStr} (domain: ${options.domainId})...`,
         )
+        this.notifier?.notify(
+          "SmartScribe",
+          `Recording started (${durationStr})`,
+          "audio-input-microphone",
+        )
       },
 
       onRecordingProgress: (elapsed, total) => {
@@ -134,6 +150,11 @@ export class App {
 
       onTranscriptionStart: () => {
         this.presenter.startSpinner("Transcribing with Gemini...")
+        this.notifier?.notify(
+          "SmartScribe",
+          "Transcribing audio...",
+          "system-run",
+        )
       },
 
       onTranscriptionComplete: () => {
@@ -143,6 +164,11 @@ export class App {
       onClipboardCopy: (success) => {
         if (success) {
           this.presenter.success("Copied to clipboard")
+          this.notifier?.notify(
+            "SmartScribe",
+            "Copied to clipboard",
+            "edit-copy",
+          )
         } else {
           this.presenter.warn("Could not copy to clipboard")
         }
@@ -151,6 +177,11 @@ export class App {
       onKeystrokeSend: (success) => {
         if (success) {
           this.presenter.success("Typed into focused window")
+          this.notifier?.notify(
+            "SmartScribe",
+            "Typed into focused window",
+            "input-keyboard",
+          )
         } else {
           this.presenter.warn("Could not type into window")
         }

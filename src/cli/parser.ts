@@ -1,4 +1,4 @@
-import { parseArgs } from 'node:util';
+import { parseArgs } from "node:util"
 import { Duration } from "../domain/recording/value-objects/duration.vo"
 import { Result } from "../domain/shared/result"
 import {
@@ -23,6 +23,7 @@ export interface CliOptions {
   domainId: DomainId
   clipboard: boolean
   keystroke: boolean
+  notify: boolean
   help: boolean
   version: boolean
 }
@@ -61,6 +62,7 @@ OPTIONS:
                              Options: ${domains}
     -c, --clipboard          Copy transcription to clipboard
     -k, --keystroke          Type transcription into focused window
+    -n, --notify             Show desktop notifications
     -h, --help               Show this help message
     -v, --version            Show version
 
@@ -100,6 +102,7 @@ export function parseCliArgs(
         domain: { type: "string", short: "D", default: "general" },
         clipboard: { type: "boolean", short: "c", default: false },
         keystroke: { type: "boolean", short: "k", default: false },
+        notify: { type: "boolean", short: "n", default: false },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", short: "v", default: false },
       },
@@ -114,6 +117,7 @@ export function parseCliArgs(
         domainId: "general",
         clipboard: false,
         keystroke: false,
+        notify: false,
         help: true,
         version: false,
       })
@@ -125,6 +129,7 @@ export function parseCliArgs(
         domainId: "general",
         clipboard: false,
         keystroke: false,
+        notify: false,
         help: false,
         version: true,
       })
@@ -152,6 +157,7 @@ export function parseCliArgs(
       domainId: domainValue,
       clipboard: values.clipboard as boolean,
       keystroke: values.keystroke as boolean,
+      notify: values.notify as boolean,
       help: false,
       version: false,
     })

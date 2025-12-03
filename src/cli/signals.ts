@@ -44,6 +44,9 @@ export class SignalHandler {
           // Ignore cleanup errors during shutdown
         }
       }
+
+      // Exit after cleanup (exit code 130 = 128 + SIGINT(2))
+      process.exit(130)
     }
 
     process.on("SIGINT", () => handler("SIGINT"))
