@@ -117,6 +117,11 @@ export class DaemonApp {
 
       onTranscriptionStart: () => {
         this.presenter.startSpinner("Transcribing with Gemini...")
+        this.notifier?.notify(
+          "SmartScribe",
+          "Transcribing audio...",
+          "system-run",
+        )
       },
 
       onTranscriptionComplete: (text) => {
