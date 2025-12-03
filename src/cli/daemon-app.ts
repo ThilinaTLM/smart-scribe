@@ -63,9 +63,9 @@ export class DaemonApp {
    */
   private setupSignalHandlers(): void {
     this.signalHandler = new DaemonSignalHandler(
-      () => this.handleStart(),
-      () => this.handleStop(),
+      () => this.handleToggle(),
       () => this.handleCancel(),
+      () => this.handleExit(),
     )
     this.signalHandler.setup()
   }
@@ -189,9 +189,11 @@ export class DaemonApp {
     this.presenter.info(`Max recording: ${maxDurationStr}`)
     this.presenter.info("")
     this.presenter.info("Control commands:")
-    this.presenter.info(`  kill -SIGUSR1 ${pid}   # Start recording`)
-    this.presenter.info(`  kill -SIGUSR2 ${pid}   # Stop and transcribe`)
-    this.presenter.info(`  kill -SIGINT  ${pid}   # Cancel or exit`)
+    this.presenter.info(
+      `  kill -SIGUSR1 ${pid}   # Toggle recording (start/stop+transcribe)`,
+    )
+    this.presenter.info(`  kill -SIGUSR2 ${pid}   # Cancel recording`)
+    this.presenter.info(`  kill -SIGINT  ${pid}   # Exit daemon`)
     this.presenter.info("")
     this.presenter.info("Waiting for signals...")
 
@@ -203,46 +205,47 @@ export class DaemonApp {
   }
 
   /**
-   * Handle SIGUSR1 - Start recording
+   * Handle SIGUSR1 - Toggle recording (start if idle, stop+transcribe if recording)
    */
-  private handleStart(): void {
-    if (!this.useCase.isIdle) {
-      this.presenter.warn(
-        `Cannot start recording: currently ${this.useCase.state}`,
-      )
-      return
-    }
-
-    const result = this.useCase.startRecording()
-    if (!result.ok) {
-      this.presenter.error(result.error.message)
+  private handleToggle(): void {
+    if (this.useCase.isIdle) {
+      // Start recording
+      const result = this.useCase.startRecording()
+      if (!result.ok) {
+        this.presenter.error(result.error.message)
+      }
+    } else if (this.useCase.isRecording) {
+      // Stop and transcribe
+      this.useCase.stopAndTranscribe().catch((error) => {
+        this.presenter.error(`Transcription failed: ${error.message}`)
+      })
+    } else {
+      // Processing - warn user
+      this.presenter.warn("Already transcribing, please wait...")
     }
   }
 
   /**
-   * Handle SIGUSR2 - Stop recording and transcribe
-   */
-  private handleStop(): void {
-    if (!this.useCase.isRecording) {
-      this.presenter.warn(
-        `Cannot stop recording: currently ${this.useCase.state}`,
-      )
-      return
-    }
-
-    // stopAndTranscribe is async, but signal handlers are sync
-    // The result will be handled by the callbacks
-    this.useCase.stopAndTranscribe().catch((error) => {
-      this.presenter.error(`Transcription failed: ${error.message}`)
-    })
-  }
-
-  /**
-   * Handle SIGINT/SIGTERM - Cancel or exit
+   * Handle SIGUSR2 - Cancel recording without transcribing
    */
   private handleCancel(): void {
     if (this.useCase.isRecording) {
-      // Cancel current recording
+      this.useCase.cancel().catch((error) => {
+        this.presenter.error(`Cancel failed: ${error.message}`)
+      })
+    } else {
+      this.presenter.warn("Nothing to cancel")
+    }
+  }
+
+  /**
+   * Handle SIGINT/SIGTERM - Exit daemon
+   */
+  private handleExit(): void {
+    if (this.useCase.isRecording) {
+      // Cancel recording first, then exit
+      this.presenter.info("Cancelling recording and shutting down...")
+      this.shouldExit = true
       this.useCase.cancel().catch((error) => {
         this.presenter.error(`Cancel failed: ${error.message}`)
       })
@@ -251,7 +254,6 @@ export class DaemonApp {
       this.presenter.info(
         "Waiting for transcription to complete before exit...",
       )
-      // Set a flag to exit after processing
       this.shouldExit = true
     } else {
       // Idle - exit immediately

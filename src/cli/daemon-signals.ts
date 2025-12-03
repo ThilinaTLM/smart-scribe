@@ -1,14 +1,14 @@
 /**
  * Signal handler for daemon mode.
- * Handles SIGUSR1, SIGUSR2, and SIGINT signals.
+ * Handles SIGUSR1 (toggle), SIGUSR2 (cancel), and SIGINT/SIGTERM (exit).
  */
 export class DaemonSignalHandler {
   private isSetup = false
 
   constructor(
-    private readonly onStart: () => void,
-    private readonly onStop: () => void,
+    private readonly onToggle: () => void,
     private readonly onCancel: () => void,
+    private readonly onExit: () => void,
   ) {}
 
   /**
@@ -18,19 +18,19 @@ export class DaemonSignalHandler {
     if (this.isSetup) return
 
     process.on("SIGUSR1", () => {
-      this.onStart()
+      this.onToggle()
     })
 
     process.on("SIGUSR2", () => {
-      this.onStop()
+      this.onCancel()
     })
 
     process.on("SIGINT", () => {
-      this.onCancel()
+      this.onExit()
     })
 
     process.on("SIGTERM", () => {
-      this.onCancel()
+      this.onExit()
     })
 
     this.isSetup = true
