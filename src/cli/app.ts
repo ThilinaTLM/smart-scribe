@@ -1,12 +1,17 @@
 import type { NotificationPort } from "../application/ports/notification.port"
 import { DaemonTranscriptionUseCase } from "../application/use-cases/daemon-transcription"
 import { TranscribeRecordingUseCase } from "../application/use-cases/transcribe-recording"
+import type { AppConfig } from "../domain/config"
+import { Duration } from "../domain/recording/value-objects/duration.vo"
+import type { DomainId } from "../domain/transcription/value-objects/domain-preset.vo"
 import { WaylandClipboardAdapter } from "../infrastructure/clipboard/clipboard.adapter"
-import { loadEnvironment } from "../infrastructure/config/environment"
+import { ConfigService } from "../infrastructure/config/config.service"
+import { XdgConfigAdapter } from "../infrastructure/config/xdg-config.adapter"
 import { XdotoolKeystrokeAdapter } from "../infrastructure/keystroke/xdotool.adapter"
 import { NotifySendAdapter } from "../infrastructure/notification/notify-send.adapter"
 import { FFmpegRecorderAdapter } from "../infrastructure/recording/ffmpeg-recorder.adapter"
 import { GeminiTranscriptionAdapter } from "../infrastructure/transcription/gemini-transcription.adapter"
+import { ConfigCommand } from "./config-command"
 import { DaemonApp } from "./daemon-app"
 import {
   type CliOptions,
@@ -14,6 +19,8 @@ import {
   EXIT_CODES,
   getHelpText,
   parseCliArgs,
+  type ResolvedCliOptions,
+  type ResolvedDaemonCliOptions,
   VERSION,
 } from "./parser"
 import { Presenter } from "./presenter"
@@ -49,6 +56,13 @@ export class App {
 
     const options = parseResult.value
 
+    // Handle config subcommand (doesn't need API key)
+    if (options.mode === "config") {
+      const configAdapter = new XdgConfigAdapter()
+      const configCommand = new ConfigCommand(configAdapter)
+      return await configCommand.execute(options.configAction)
+    }
+
     // Handle --help and --version (only in oneshot mode)
     if (options.mode === "oneshot") {
       if (options.help) {
@@ -62,21 +76,24 @@ export class App {
       }
     }
 
-    // Load environment
-    const envResult = loadEnvironment()
-    if (!envResult.ok) {
-      this.presenter.error(envResult.error.message)
+    // Load config with priority merging
+    const configAdapter = new XdgConfigAdapter()
+    const configService = new ConfigService(configAdapter)
+    const configResult = await configService.loadMergedConfig()
+
+    if (!configResult.ok) {
+      this.presenter.error(configResult.error.message)
       return EXIT_CODES.ERROR
     }
 
-    const env = envResult.value
+    const config = configResult.value
 
     // Branch based on mode
     if (options.mode === "daemon") {
-      return await this.runDaemonMode(options, env.geminiApiKey)
+      return await this.runDaemonMode(options, config)
     }
 
-    return await this.runOneshotMode(options, env.geminiApiKey)
+    return await this.runOneshotMode(options, config)
   }
 
   /**
@@ -84,35 +101,71 @@ export class App {
    */
   private async runDaemonMode(
     options: DaemonCliOptions,
-    apiKey: string,
+    config: AppConfig,
   ): Promise<number> {
+    // API key is guaranteed by ConfigService validation
+    const apiKey = config.apiKey
+    if (!apiKey) {
+      this.presenter.error("API key not configured")
+      return EXIT_CODES.ERROR
+    }
+
+    // Merge CLI options with config defaults (CLI > config > hardcoded default)
+    const clipboard = options.clipboard || (config.clipboard ?? false)
+    const keystroke = options.keystroke || (config.keystroke ?? false)
+    const notify = options.notify || (config.notify ?? false)
+    const domainId: DomainId =
+      options.domainId ?? (config.domain as DomainId) ?? "general"
+
+    // Parse maxDuration from config if not provided via CLI
+    let maxDuration = options.maxDuration
+    if (!maxDuration) {
+      const configMaxDuration = config.maxDuration ?? "60s"
+      const parseResult = Duration.parse(configMaxDuration)
+      if (!parseResult.ok) {
+        this.presenter.error(
+          `Invalid max_duration in config: ${configMaxDuration}`,
+        )
+        return EXIT_CODES.ERROR
+      }
+      maxDuration = parseResult.value
+    }
+
     // Create infrastructure adapters
     const recorder = new FFmpegRecorderAdapter()
     const transcriber = new GeminiTranscriptionAdapter(apiKey)
-    const clipboard = options.clipboard
+    const clipboardAdapter = clipboard
       ? new WaylandClipboardAdapter()
       : undefined
-    const keystroke = options.keystroke
+    const keystrokeAdapter = keystroke
       ? new XdotoolKeystrokeAdapter()
       : undefined
-    const notifier = options.notify ? new NotifySendAdapter() : null
+    const notifier = notify ? new NotifySendAdapter() : null
 
     // Create daemon use case
     const daemonUseCase = new DaemonTranscriptionUseCase(
       recorder,
       transcriber,
       {
-        domainId: options.domainId,
-        maxDuration: options.maxDuration,
-        enableClipboard: options.clipboard,
-        enableKeystroke: options.keystroke,
+        domainId,
+        maxDuration,
+        enableClipboard: clipboard,
+        enableKeystroke: keystroke,
       },
-      clipboard,
-      keystroke,
+      clipboardAdapter,
+      keystrokeAdapter,
     )
 
-    // Create and run daemon app
-    const daemonApp = new DaemonApp(daemonUseCase, notifier, options)
+    // Create and run daemon app with merged options
+    const mergedOptions: ResolvedDaemonCliOptions = {
+      mode: "daemon",
+      domainId,
+      maxDuration,
+      clipboard,
+      keystroke,
+      notify,
+    }
+    const daemonApp = new DaemonApp(daemonUseCase, notifier, mergedOptions)
     return await daemonApp.run()
   }
 
@@ -121,27 +174,65 @@ export class App {
    */
   private async runOneshotMode(
     options: CliOptions,
-    apiKey: string,
+    config: AppConfig,
   ): Promise<number> {
+    // API key is guaranteed by ConfigService validation
+    const apiKey = config.apiKey
+    if (!apiKey) {
+      this.presenter.error("API key not configured")
+      return EXIT_CODES.ERROR
+    }
+
+    // Merge CLI options with config defaults (CLI > config > hardcoded default)
+    const clipboard = options.clipboard || (config.clipboard ?? false)
+    const keystroke = options.keystroke || (config.keystroke ?? false)
+    const notify = options.notify || (config.notify ?? false)
+    const domainId: DomainId =
+      options.domainId ?? (config.domain as DomainId) ?? "general"
+
+    // Parse duration from config if not provided via CLI
+    let duration = options.duration
+    if (!duration) {
+      const configDuration = config.duration ?? "10s"
+      const parseResult = Duration.parse(configDuration)
+      if (!parseResult.ok) {
+        this.presenter.error(`Invalid duration in config: ${configDuration}`)
+        return EXIT_CODES.ERROR
+      }
+      duration = parseResult.value
+    }
+
+    // Update options with merged values for later use
+    const mergedOptions: ResolvedCliOptions = {
+      mode: "oneshot",
+      duration,
+      domainId,
+      clipboard,
+      keystroke,
+      notify,
+      help: false,
+      version: false,
+    }
+
     // Create infrastructure adapters
     const recorder = new FFmpegRecorderAdapter()
     const transcriber = new GeminiTranscriptionAdapter(apiKey)
-    const clipboard = options.clipboard
+    const clipboardAdapter = clipboard
       ? new WaylandClipboardAdapter()
       : undefined
-    const keystroke = options.keystroke
+    const keystrokeAdapter = keystroke
       ? new XdotoolKeystrokeAdapter()
       : undefined
 
     // Create notifier if enabled
-    this.notifier = options.notify ? new NotifySendAdapter() : null
+    this.notifier = notify ? new NotifySendAdapter() : null
 
     // Create use case
     this.useCase = new TranscribeRecordingUseCase(
       recorder,
       transcriber,
-      clipboard,
-      keystroke,
+      clipboardAdapter,
+      keystrokeAdapter,
     )
 
     // Setup signal handler to stop recording on Ctrl+C
@@ -159,13 +250,15 @@ export class App {
     })
 
     // Execute the use case
-    return await this.executeTranscription(options)
+    return await this.executeTranscription(mergedOptions)
   }
 
   /**
    * Execute the transcription workflow
    */
-  private async executeTranscription(options: CliOptions): Promise<number> {
+  private async executeTranscription(
+    options: ResolvedCliOptions,
+  ): Promise<number> {
     if (!this.useCase) {
       this.presenter.error("Application not initialized")
       return EXIT_CODES.ERROR

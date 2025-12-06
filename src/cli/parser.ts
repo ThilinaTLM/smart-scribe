@@ -5,6 +5,7 @@ import {
   type DomainId,
   DomainPreset,
 } from "../domain/transcription/value-objects/domain-preset.vo"
+import { type ConfigCliOptions, parseConfigArgs } from "./config-parser"
 
 /**
  * POSIX exit codes
@@ -16,9 +17,38 @@ export const EXIT_CODES = {
 } as const
 
 /**
- * Parsed CLI options for one-shot mode
+ * Parsed CLI options for one-shot mode.
+ * Optional fields will be filled from config file if not provided.
  */
 export interface CliOptions {
+  mode: "oneshot"
+  duration?: Duration
+  domainId?: DomainId
+  clipboard: boolean
+  keystroke: boolean
+  notify: boolean
+  help: boolean
+  version: boolean
+}
+
+/**
+ * Parsed CLI options for daemon mode.
+ * Optional fields will be filled from config file if not provided.
+ */
+export interface DaemonCliOptions {
+  mode: "daemon"
+  maxDuration?: Duration
+  domainId?: DomainId
+  clipboard: boolean
+  keystroke: boolean
+  notify: boolean
+}
+
+/**
+ * Resolved CLI options with all required fields populated.
+ * Created after merging CLI args with config file values.
+ */
+export interface ResolvedCliOptions {
   mode: "oneshot"
   duration: Duration
   domainId: DomainId
@@ -30,9 +60,9 @@ export interface CliOptions {
 }
 
 /**
- * Parsed CLI options for daemon mode
+ * Resolved daemon CLI options with all required fields populated.
  */
-export interface DaemonCliOptions {
+export interface ResolvedDaemonCliOptions {
   mode: "daemon"
   maxDuration: Duration
   domainId: DomainId
@@ -44,7 +74,7 @@ export interface DaemonCliOptions {
 /**
  * Union of all CLI option types
  */
-export type ParsedCliOptions = CliOptions | DaemonCliOptions
+export type ParsedCliOptions = CliOptions | DaemonCliOptions | ConfigCliOptions
 
 /**
  * CLI parsing error
@@ -73,6 +103,7 @@ smart-scribe - AI-powered voice to text transcription
 USAGE:
     smart-scribe [OPTIONS]
     smart-scribe --daemon [OPTIONS]
+    smart-scribe config <COMMAND>
 
 ONE-SHOT MODE OPTIONS:
     -d, --duration <TIME>    Recording duration (default: 10s)
@@ -91,6 +122,29 @@ COMMON OPTIONS:
     -n, --notify             Show desktop notifications
     -h, --help               Show this help message
     -v, --version            Show version
+
+CONFIG COMMANDS:
+    smart-scribe config init              Create config file with defaults
+    smart-scribe config set <key> <value> Set a config value
+    smart-scribe config get <key>         Get a config value
+    smart-scribe config list              List all config values
+    smart-scribe config path              Show config file path
+
+CONFIG FILE:
+    Location: $XDG_CONFIG_HOME/smart-scribe/config.toml
+              (default: ~/.config/smart-scribe/config.toml)
+
+CONFIG KEYS:
+    api_key       Gemini API key
+    duration      Default recording duration (oneshot)
+    max_duration  Max recording duration (daemon)
+    domain        Default domain preset
+    clipboard     Copy to clipboard by default (true/false)
+    keystroke     Type into window by default (true/false)
+    notify        Show notifications by default (true/false)
+
+PRIORITY:
+    CLI arguments > Environment variables > Config file > Defaults
 
 ONE-SHOT EXAMPLES:
     smart-scribe                     # 10s transcription to stdout only
@@ -128,19 +182,24 @@ OUTPUT:
 export function parseCliArgs(
   argv: string[],
 ): Result<ParsedCliOptions, CliParseError> {
+  // Check for config subcommand first
+  if (argv.length > 0 && argv[0] === "config") {
+    return parseConfigArgs(argv.slice(1))
+  }
+
   try {
     const { values } = parseArgs({
       args: argv,
       options: {
-        duration: { type: "string", short: "d", default: "10s" },
-        domain: { type: "string", short: "D", default: "general" },
+        duration: { type: "string", short: "d" },
+        domain: { type: "string", short: "D" },
         clipboard: { type: "boolean", short: "c", default: false },
         keystroke: { type: "boolean", short: "k", default: false },
         notify: { type: "boolean", short: "n", default: false },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", short: "v", default: false },
         daemon: { type: "boolean", default: false },
-        "max-duration": { type: "string", default: "60s" },
+        "max-duration": { type: "string" },
       },
       strict: true,
       allowPositionals: true,
@@ -150,8 +209,6 @@ export function parseCliArgs(
     if (values.help) {
       return Result.ok({
         mode: "oneshot",
-        duration: Duration.fromSeconds(10),
-        domainId: "general",
         clipboard: false,
         keystroke: false,
         notify: false,
@@ -163,8 +220,6 @@ export function parseCliArgs(
     if (values.version) {
       return Result.ok({
         mode: "oneshot",
-        duration: Duration.fromSeconds(10),
-        domainId: "general",
         clipboard: false,
         keystroke: false,
         notify: false,
@@ -173,15 +228,19 @@ export function parseCliArgs(
       })
     }
 
-    // Validate domain (common to both modes)
-    const domainValue = values.domain as string
-    if (!DomainPreset.isValidId(domainValue)) {
-      const validDomains = DomainPreset.getAllIds().join(", ")
-      return Result.err(
-        new CliParseError(
-          `Invalid domain "${domainValue}". Valid options: ${validDomains}`,
-        ),
-      )
+    // Validate domain if provided
+    const domainValue = values.domain as string | undefined
+    let domainId: DomainId | undefined
+    if (domainValue !== undefined) {
+      if (!DomainPreset.isValidId(domainValue)) {
+        const validDomains = DomainPreset.getAllIds().join(", ")
+        return Result.err(
+          new CliParseError(
+            `Invalid domain "${domainValue}". Valid options: ${validDomains}`,
+          ),
+        )
+      }
+      domainId = domainValue
     }
 
     // Check for daemon mode
@@ -198,32 +257,42 @@ export function parseCliArgs(
         )
       }
 
-      // Parse max duration
-      const maxDurationResult = Duration.parse(values["max-duration"] as string)
-      if (!maxDurationResult.ok) {
-        return Result.err(new CliParseError(maxDurationResult.error.message))
+      // Parse max duration if provided
+      const maxDurationStr = values["max-duration"] as string | undefined
+      let maxDuration: Duration | undefined
+      if (maxDurationStr !== undefined) {
+        const maxDurationResult = Duration.parse(maxDurationStr)
+        if (!maxDurationResult.ok) {
+          return Result.err(new CliParseError(maxDurationResult.error.message))
+        }
+        maxDuration = maxDurationResult.value
       }
 
       return Result.ok({
         mode: "daemon",
-        maxDuration: maxDurationResult.value,
-        domainId: domainValue,
+        maxDuration,
+        domainId,
         clipboard: values.clipboard as boolean,
         keystroke: values.keystroke as boolean,
         notify: values.notify as boolean,
       })
     }
 
-    // One-shot mode: Parse duration
-    const durationResult = Duration.parse(values.duration as string)
-    if (!durationResult.ok) {
-      return Result.err(new CliParseError(durationResult.error.message))
+    // One-shot mode: Parse duration if provided
+    const durationStr = values.duration as string | undefined
+    let duration: Duration | undefined
+    if (durationStr !== undefined) {
+      const durationResult = Duration.parse(durationStr)
+      if (!durationResult.ok) {
+        return Result.err(new CliParseError(durationResult.error.message))
+      }
+      duration = durationResult.value
     }
 
     return Result.ok({
       mode: "oneshot",
-      duration: durationResult.value,
-      domainId: domainValue,
+      duration,
+      domainId,
       clipboard: values.clipboard as boolean,
       keystroke: values.keystroke as boolean,
       notify: values.notify as boolean,
