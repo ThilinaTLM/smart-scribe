@@ -8,6 +8,7 @@
     "smart-scribe": "src/index.ts"
   },
   "scripts": {
+    "build": "bun build --compile --minify src/index.ts --outfile dist/smart-scribe",
     "lint": "biome lint src",
     "lint:fix": "biome lint --write src",
     "format": "biome format --write src",

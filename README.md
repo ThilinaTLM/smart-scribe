@@ -29,6 +29,18 @@ Get a Google Gemini API key from [Google AI Studio](https://aistudio.google.com/
 
 ## Installation
 
+### Download Binary
+
+Download the latest release from [GitHub Releases](../../releases):
+
+```bash
+# Download and make executable
+chmod +x smart-scribe-linux-x86_64
+sudo mv smart-scribe-linux-x86_64 /usr/local/bin/smart-scribe
+```
+
+### From Source
+
 ```bash
 # Clone the repository
 git clone <repo-url>
@@ -42,6 +54,13 @@ echo "GEMINI_API_KEY=your_api_key_here" > .env
 
 # Link CLI globally (optional)
 bun link
+```
+
+### Build Binary
+
+```bash
+bun run build
+# Output: dist/smart-scribe
 ```
 
 ## Usage
@@ -119,6 +138,17 @@ Or use the helper scripts (useful for binding to global hotkeys):
 - Transcribed text is written to **stdout**
 - Status messages are written to **stderr**
 - Use `-c` to copy to clipboard, `-k` to type into focused window
+
+## Releasing
+
+To create a new release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions will automatically build the binary and create a release.
 
 ## License
 
