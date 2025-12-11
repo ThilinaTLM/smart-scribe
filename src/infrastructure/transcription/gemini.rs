@@ -231,8 +231,7 @@ impl Transcriber for GeminiTranscriber {
         }
 
         // Extract text from response
-        let text = Self::extract_text(&response)
-            .ok_or(TranscriptionError::EmptyResponse)?;
+        let text = Self::extract_text(&response).ok_or(TranscriptionError::EmptyResponse)?;
 
         let trimmed = text.trim();
         if trimmed.is_empty() {

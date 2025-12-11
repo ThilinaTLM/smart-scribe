@@ -67,7 +67,9 @@ mod tests {
     #[test]
     fn build_contains_domain_context() {
         let prompt = SystemPrompt::build(DomainId::Dev);
-        assert!(prompt.content().contains("Domain Context: Software Engineering"));
+        assert!(prompt
+            .content()
+            .contains("Domain Context: Software Engineering"));
         assert!(prompt.content().contains("programming terminology"));
     }
 

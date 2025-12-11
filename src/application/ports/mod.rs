@@ -3,17 +3,17 @@
 //! These traits define the boundaries between the application
 //! and infrastructure layers.
 
-pub mod recorder;
-pub mod transcriber;
 pub mod clipboard;
+pub mod config;
 pub mod keystroke;
 pub mod notifier;
-pub mod config;
+pub mod recorder;
+pub mod transcriber;
 
 // Re-export common types
-pub use recorder::{AudioRecorder, UnboundedRecorder, RecordingError, ProgressCallback};
-pub use transcriber::{Transcriber, TranscriptionError};
 pub use clipboard::{Clipboard, ClipboardError};
-pub use keystroke::{Keystroke, KeystrokeError};
-pub use notifier::{Notifier, NotificationError, NotificationIcon};
 pub use config::ConfigStore;
+pub use keystroke::{Keystroke, KeystrokeError};
+pub use notifier::{NotificationError, NotificationIcon, Notifier};
+pub use recorder::{AudioRecorder, ProgressCallback, RecordingError, UnboundedRecorder};
+pub use transcriber::{Transcriber, TranscriptionError};

@@ -160,7 +160,9 @@ mod tests {
         assert!(!b64.is_empty());
         // Verify it's valid base64 by decoding
         use base64::Engine;
-        let decoded = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
         assert_eq!(decoded, vec![1, 2, 3, 4]);
     }
 

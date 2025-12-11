@@ -1,7 +1,7 @@
 //! Configuration port interface
 
-use std::path::PathBuf;
 use async_trait::async_trait;
+use std::path::PathBuf;
 
 use crate::domain::config::AppConfig;
 use crate::domain::error::ConfigError;

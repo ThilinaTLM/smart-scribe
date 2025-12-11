@@ -76,34 +76,42 @@ impl FromStr for Duration {
             if ch.is_ascii_digit() {
                 current_num.push(ch);
             } else if ch == 'm' && !current_num.is_empty() {
-                minutes = current_num
-                    .parse()
-                    .map_err(|_| DurationParseError { input: s.to_string() })?;
+                minutes = current_num.parse().map_err(|_| DurationParseError {
+                    input: s.to_string(),
+                })?;
                 current_num.clear();
                 found_any = true;
             } else if ch == 's' && !current_num.is_empty() {
-                seconds = current_num
-                    .parse()
-                    .map_err(|_| DurationParseError { input: s.to_string() })?;
+                seconds = current_num.parse().map_err(|_| DurationParseError {
+                    input: s.to_string(),
+                })?;
                 current_num.clear();
                 found_any = true;
             } else {
-                return Err(DurationParseError { input: s.to_string() });
+                return Err(DurationParseError {
+                    input: s.to_string(),
+                });
             }
         }
 
         // Handle case where there's leftover numbers (invalid format)
         if !current_num.is_empty() || !found_any {
-            return Err(DurationParseError { input: s.to_string() });
+            return Err(DurationParseError {
+                input: s.to_string(),
+            });
         }
 
         let total_ms = (minutes * 60 + seconds) * 1000;
 
         if total_ms == 0 {
-            return Err(DurationParseError { input: s.to_string() });
+            return Err(DurationParseError {
+                input: s.to_string(),
+            });
         }
 
-        Ok(Self { milliseconds: total_ms })
+        Ok(Self {
+            milliseconds: total_ms,
+        })
     }
 }
 

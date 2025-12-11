@@ -11,7 +11,7 @@ use crate::infrastructure::{
     FfmpegRecorder, GeminiTranscriber, NotifySendNotifier, WaylandClipboard, XdotoolKeystroke,
 };
 
-use super::app::{EXIT_ERROR, EXIT_SUCCESS, get_api_key};
+use super::app::{get_api_key, EXIT_ERROR, EXIT_SUCCESS};
 use super::args::DaemonOptions;
 use super::pid_file::{PidFile, PidFileError};
 use super::presenter::Presenter;
@@ -215,4 +215,3 @@ where
         }
     }
 }
-

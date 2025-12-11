@@ -34,16 +34,15 @@ impl XdgConfigStore {
     /// Parse TOML content into AppConfig
     fn parse_toml(content: &str) -> Result<AppConfig, ConfigError> {
         // Try to parse as flat format first
-        let config: AppConfig = toml::from_str(content)
-            .map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        let config: AppConfig =
+            toml::from_str(content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 
         Ok(config)
     }
 
     /// Serialize AppConfig to TOML
     fn to_toml(config: &AppConfig) -> Result<String, ConfigError> {
-        toml::to_string_pretty(config)
-            .map_err(|e| ConfigError::WriteError(e.to_string()))
+        toml::to_string_pretty(config).map_err(|e| ConfigError::WriteError(e.to_string()))
     }
 }
 

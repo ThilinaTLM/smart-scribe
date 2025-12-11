@@ -70,7 +70,9 @@ impl FromStr for DomainId {
             "medical" => Ok(Self::Medical),
             "legal" => Ok(Self::Legal),
             "finance" => Ok(Self::Finance),
-            _ => Err(InvalidDomainError { input: s.to_string() }),
+            _ => Err(InvalidDomainError {
+                input: s.to_string(),
+            }),
         }
     }
 }

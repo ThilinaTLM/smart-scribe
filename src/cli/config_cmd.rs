@@ -22,12 +22,12 @@ pub async fn handle_config_command<S: ConfigStore>(
     }
 }
 
-async fn handle_init<S: ConfigStore>(
-    store: &S,
-    presenter: &Presenter,
-) -> Result<(), ConfigError> {
+async fn handle_init<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result<(), ConfigError> {
     store.init().await?;
-    presenter.success(&format!("Config file created at: {}", store.path().display()));
+    presenter.success(&format!(
+        "Config file created at: {}",
+        store.path().display()
+    ));
     Ok(())
 }
 
@@ -41,10 +41,7 @@ async fn handle_set<S: ConfigStore>(
     if !is_valid_config_key(key) {
         return Err(ConfigError::ValidationError {
             key: key.to_string(),
-            message: format!(
-                "Unknown key. Valid keys: {}",
-                VALID_CONFIG_KEYS.join(", ")
-            ),
+            message: format!("Unknown key. Valid keys: {}", VALID_CONFIG_KEYS.join(", ")),
         });
     }
 
@@ -60,18 +57,26 @@ async fn handle_set<S: ConfigStore>(
         "duration" => config.duration = Some(value.to_string()),
         "max_duration" => config.max_duration = Some(value.to_string()),
         "domain" => config.domain = Some(value.to_string()),
-        "clipboard" => config.clipboard = Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
-            key: key.to_string(),
-            message: "Value must be 'true' or 'false'".to_string(),
-        })?),
-        "keystroke" => config.keystroke = Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
-            key: key.to_string(),
-            message: "Value must be 'true' or 'false'".to_string(),
-        })?),
-        "notify" => config.notify = Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
-            key: key.to_string(),
-            message: "Value must be 'true' or 'false'".to_string(),
-        })?),
+        "clipboard" => {
+            config.clipboard =
+                Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: "Value must be 'true' or 'false'".to_string(),
+                })?)
+        }
+        "keystroke" => {
+            config.keystroke =
+                Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: "Value must be 'true' or 'false'".to_string(),
+                })?)
+        }
+        "notify" => {
+            config.notify = Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                key: key.to_string(),
+                message: "Value must be 'true' or 'false'".to_string(),
+            })?)
+        }
         _ => unreachable!(), // Already validated
     }
 
@@ -91,10 +96,7 @@ async fn handle_get<S: ConfigStore>(
     if !is_valid_config_key(key) {
         return Err(ConfigError::ValidationError {
             key: key.to_string(),
-            message: format!(
-                "Unknown key. Valid keys: {}",
-                VALID_CONFIG_KEYS.join(", ")
-            ),
+            message: format!("Unknown key. Valid keys: {}", VALID_CONFIG_KEYS.join(", ")),
         });
     }
 
@@ -119,15 +121,15 @@ async fn handle_get<S: ConfigStore>(
     Ok(())
 }
 
-async fn handle_list<S: ConfigStore>(
-    store: &S,
-    presenter: &Presenter,
-) -> Result<(), ConfigError> {
+async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result<(), ConfigError> {
     let config = store.load().await?;
 
     presenter.key_value(
         "api_key",
-        &config.api_key.map(|s| mask_api_key(&s)).unwrap_or_else(|| "(not set)".to_string()),
+        &config
+            .api_key
+            .map(|s| mask_api_key(&s))
+            .unwrap_or_else(|| "(not set)".to_string()),
     );
     presenter.key_value(
         "duration",
@@ -137,21 +139,27 @@ async fn handle_list<S: ConfigStore>(
         "max_duration",
         config.max_duration.as_deref().unwrap_or("(not set)"),
     );
-    presenter.key_value(
-        "domain",
-        config.domain.as_deref().unwrap_or("(not set)"),
-    );
+    presenter.key_value("domain", config.domain.as_deref().unwrap_or("(not set)"));
     presenter.key_value(
         "clipboard",
-        &config.clipboard.map(|b| b.to_string()).unwrap_or_else(|| "(not set)".to_string()),
+        &config
+            .clipboard
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "(not set)".to_string()),
     );
     presenter.key_value(
         "keystroke",
-        &config.keystroke.map(|b| b.to_string()).unwrap_or_else(|| "(not set)".to_string()),
+        &config
+            .keystroke
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "(not set)".to_string()),
     );
     presenter.key_value(
         "notify",
-        &config.notify.map(|b| b.to_string()).unwrap_or_else(|| "(not set)".to_string()),
+        &config
+            .notify
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "(not set)".to_string()),
     );
 
     Ok(())
@@ -166,20 +174,20 @@ fn handle_path<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result<(), C
 fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
     match key {
         "duration" | "max_duration" => {
-            value.parse::<crate::domain::recording::Duration>().map_err(|e| {
-                ConfigError::ValidationError {
+            value
+                .parse::<crate::domain::recording::Duration>()
+                .map_err(|e| ConfigError::ValidationError {
                     key: key.to_string(),
                     message: e.to_string(),
-                }
-            })?;
+                })?;
         }
         "domain" => {
-            value.parse::<DomainId>().map_err(|e| {
-                ConfigError::ValidationError {
+            value
+                .parse::<DomainId>()
+                .map_err(|e| ConfigError::ValidationError {
                     key: key.to_string(),
                     message: e.to_string(),
-                }
-            })?;
+                })?;
         }
         "clipboard" | "keystroke" | "notify" => {
             parse_bool(value).map_err(|_| ConfigError::ValidationError {
@@ -206,7 +214,7 @@ fn mask_api_key(key: &str) -> String {
     if key.len() <= 8 {
         "*".repeat(key.len())
     } else {
-        format!("{}...{}", &key[..4], &key[key.len()-4..])
+        format!("{}...{}", &key[..4], &key[key.len() - 4..])
     }
 }
 

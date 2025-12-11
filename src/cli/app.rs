@@ -49,13 +49,8 @@ pub async fn run_oneshot(options: TranscribeOptions) -> ExitCode {
     let notifier = NotifySendNotifier::new();
 
     // Create use case
-    let use_case = TranscribeRecordingUseCase::new(
-        recorder,
-        transcriber,
-        clipboard,
-        keystroke,
-        notifier,
-    );
+    let use_case =
+        TranscribeRecordingUseCase::new(recorder, transcriber, clipboard, keystroke, notifier);
 
     // Create input
     let input = TranscribeInput {

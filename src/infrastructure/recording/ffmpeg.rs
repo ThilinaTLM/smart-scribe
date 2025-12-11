@@ -92,16 +92,16 @@ impl FfmpegRecorder {
         // Audio encoding settings (optimized for speech)
         args.extend([
             "-ar".to_string(),
-            "16000".to_string(),        // 16kHz sample rate
+            "16000".to_string(), // 16kHz sample rate
             "-ac".to_string(),
-            "1".to_string(),            // Mono
+            "1".to_string(), // Mono
             "-c:a".to_string(),
-            "libopus".to_string(),      // Opus codec
+            "libopus".to_string(), // Opus codec
             "-b:a".to_string(),
-            "16k".to_string(),          // 16kbps bitrate
+            "16k".to_string(), // 16kbps bitrate
             "-application".to_string(),
-            "voip".to_string(),         // Optimize for voice
-            "-y".to_string(),           // Overwrite output
+            "voip".to_string(), // Optimize for voice
+            "-y".to_string(),   // Overwrite output
             output_path.to_string_lossy().to_string(),
         ]);
 
@@ -192,9 +192,10 @@ impl AudioRecorder for FfmpegRecorder {
         }
 
         // Wait for FFmpeg to complete
-        let status = child.wait().await.map_err(|e| {
-            RecordingError::RecordingFailed(format!("FFmpeg failed: {}", e))
-        })?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| RecordingError::RecordingFailed(format!("FFmpeg failed: {}", e)))?;
 
         if !status.success() {
             // Read stderr for error message
@@ -273,9 +274,9 @@ impl UnboundedRecorder for FfmpegRecorder {
 
     async fn stop(&self) -> Result<AudioData, RecordingError> {
         let mut process_guard = self.process.lock().await;
-        let child = process_guard
-            .take()
-            .ok_or_else(|| RecordingError::RecordingFailed("No recording in progress".to_string()))?;
+        let child = process_guard.take().ok_or_else(|| {
+            RecordingError::RecordingFailed("No recording in progress".to_string())
+        })?;
 
         self.is_recording.store(false, Ordering::SeqCst);
 
@@ -288,9 +289,9 @@ impl UnboundedRecorder for FfmpegRecorder {
         // Get output path
         let output_path = {
             let path_guard = self.output_path.lock().await;
-            path_guard.clone().ok_or_else(|| {
-                RecordingError::ReadFailed("Output path not set".to_string())
-            })?
+            path_guard
+                .clone()
+                .ok_or_else(|| RecordingError::ReadFailed("Output path not set".to_string()))?
         };
 
         // Read the file

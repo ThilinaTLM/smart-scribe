@@ -12,7 +12,7 @@
 //! - **Infrastructure**: Adapter implementations (FFmpeg, Gemini, clipboard, etc.)
 //! - **CLI**: Command-line interface, argument parsing, and signal handling
 
-pub mod domain;
 pub mod application;
-pub mod infrastructure;
 pub mod cli;
+pub mod domain;
+pub mod infrastructure;

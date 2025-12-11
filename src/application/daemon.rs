@@ -1,17 +1,16 @@
 //! Daemon transcription use case
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use thiserror::Error;
+use tokio::sync::Mutex;
 
 use crate::domain::daemon::{DaemonSession, DaemonState, InvalidStateTransition};
 use crate::domain::recording::Duration;
 use crate::domain::transcription::{DomainId, SystemPrompt};
 
 use super::ports::{
-    Clipboard, ClipboardError, Keystroke, KeystrokeError,
-    Notifier, NotificationIcon, RecordingError,
-    Transcriber, TranscriptionError, UnboundedRecorder,
+    Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon, Notifier,
+    RecordingError, Transcriber, TranscriptionError, UnboundedRecorder,
 };
 
 /// Errors from the daemon use case
@@ -130,11 +129,14 @@ where
 
         // Notify recording start
         if self.config.enable_notify {
-            let _ = self.notifier.notify(
-                "SmartScribe",
-                "Recording started...",
-                NotificationIcon::Recording,
-            ).await;
+            let _ = self
+                .notifier
+                .notify(
+                    "SmartScribe",
+                    "Recording started...",
+                    NotificationIcon::Recording,
+                )
+                .await;
         }
 
         // Start the actual recording
@@ -145,7 +147,9 @@ where
 
     /// Stop recording and return the audio data
     /// Call `transcribe_audio` afterwards to complete the transcription
-    pub async fn stop_recording(&self) -> Result<crate::domain::transcription::AudioData, DaemonError> {
+    pub async fn stop_recording(
+        &self,
+    ) -> Result<crate::domain::transcription::AudioData, DaemonError> {
         // Transition to processing state
         {
             let mut session = self.session.lock().await;
@@ -158,16 +162,22 @@ where
     }
 
     /// Transcribe the audio data and perform output actions
-    pub async fn transcribe_audio(&self, audio: crate::domain::transcription::AudioData) -> Result<DaemonOutput, DaemonError> {
+    pub async fn transcribe_audio(
+        &self,
+        audio: crate::domain::transcription::AudioData,
+    ) -> Result<DaemonOutput, DaemonError> {
         let audio_size = audio.human_readable_size();
 
         // Notify transcription start
         if self.config.enable_notify {
-            let _ = self.notifier.notify(
-                "SmartScribe",
-                "Transcribing...",
-                NotificationIcon::Processing,
-            ).await;
+            let _ = self
+                .notifier
+                .notify(
+                    "SmartScribe",
+                    "Transcribing...",
+                    NotificationIcon::Processing,
+                )
+                .await;
         }
 
         // Build prompt and transcribe
@@ -203,11 +213,14 @@ where
 
         // Notify completion
         if self.config.enable_notify {
-            let _ = self.notifier.notify(
-                "SmartScribe",
-                "Transcription complete!",
-                NotificationIcon::Success,
-            ).await;
+            let _ = self
+                .notifier
+                .notify(
+                    "SmartScribe",
+                    "Transcription complete!",
+                    NotificationIcon::Success,
+                )
+                .await;
         }
 
         Ok(DaemonOutput {
@@ -236,11 +249,14 @@ where
 
         // Notify cancellation
         if self.config.enable_notify {
-            let _ = self.notifier.notify(
-                "SmartScribe",
-                "Recording cancelled",
-                NotificationIcon::Warning,
-            ).await;
+            let _ = self
+                .notifier
+                .notify(
+                    "SmartScribe",
+                    "Recording cancelled",
+                    NotificationIcon::Warning,
+                )
+                .await;
         }
 
         Ok(())
@@ -266,8 +282,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::transcription::AudioData;
     use crate::application::ports::NotificationError;
+    use crate::domain::transcription::AudioData;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 

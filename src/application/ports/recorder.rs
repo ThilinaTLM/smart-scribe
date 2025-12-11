@@ -1,7 +1,7 @@
 //! Recording port interfaces
 
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::domain::recording::Duration;

@@ -5,9 +5,9 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use smart_scribe::cli::{
+    app::{load_merged_config, run_oneshot, EXIT_ERROR, EXIT_USAGE_ERROR},
     args::{Cli, Commands},
     config_cmd::handle_config_command,
-    app::{run_oneshot, load_merged_config, EXIT_ERROR, EXIT_USAGE_ERROR},
     daemon_app::run_daemon,
     presenter::Presenter,
     DaemonOptions, TranscribeOptions,
@@ -36,7 +36,9 @@ async fn main() -> ExitCode {
         api_key: None, // API key comes from env/file only
         duration: cli.duration.clone(),
         max_duration: cli.max_duration.clone(),
-        domain: cli.domain.map(|d| smart_scribe::domain::transcription::DomainId::from(d).to_string()),
+        domain: cli
+            .domain
+            .map(|d| smart_scribe::domain::transcription::DomainId::from(d).to_string()),
         clipboard: if cli.clipboard { Some(true) } else { None },
         keystroke: if cli.keystroke { Some(true) } else { None },
         notify: if cli.notify { Some(true) } else { None },

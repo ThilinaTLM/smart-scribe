@@ -77,14 +77,12 @@ impl PidFile {
         }
 
         // Write our PID
-        let mut file = File::create(&self.path).map_err(|e| {
-            PidFileError::WriteFailed(format!("Failed to create PID file: {}", e))
-        })?;
+        let mut file = File::create(&self.path)
+            .map_err(|e| PidFileError::WriteFailed(format!("Failed to create PID file: {}", e)))?;
 
         let pid = process::id();
-        write!(file, "{}", pid).map_err(|e| {
-            PidFileError::WriteFailed(format!("Failed to write PID: {}", e))
-        })?;
+        write!(file, "{}", pid)
+            .map_err(|e| PidFileError::WriteFailed(format!("Failed to write PID: {}", e)))?;
 
         Ok(())
     }

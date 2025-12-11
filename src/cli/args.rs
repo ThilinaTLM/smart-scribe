@@ -202,14 +202,19 @@ mod tests {
         let cli = Cli::parse_from(["smart-scribe", "config", "init"]);
         assert!(matches!(
             cli.command,
-            Some(Commands::Config { action: ConfigAction::Init })
+            Some(Commands::Config {
+                action: ConfigAction::Init
+            })
         ));
     }
 
     #[test]
     fn cli_parses_config_set() {
         let cli = Cli::parse_from(["smart-scribe", "config", "set", "domain", "dev"]);
-        if let Some(Commands::Config { action: ConfigAction::Set { key, value } }) = cli.command {
+        if let Some(Commands::Config {
+            action: ConfigAction::Set { key, value },
+        }) = cli.command
+        {
             assert_eq!(key, "domain");
             assert_eq!(value, "dev");
         } else {

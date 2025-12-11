@@ -8,9 +8,8 @@ use crate::domain::recording::Duration;
 use crate::domain::transcription::{DomainId, SystemPrompt};
 
 use super::ports::{
-    AudioRecorder, Clipboard, ClipboardError, Keystroke, KeystrokeError,
-    Notifier, NotificationIcon, ProgressCallback, RecordingError,
-    Transcriber, TranscriptionError,
+    AudioRecorder, Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon,
+    Notifier, ProgressCallback, RecordingError, Transcriber, TranscriptionError,
 };
 
 /// Errors from the transcribe use case
@@ -118,13 +117,7 @@ where
     N: Notifier,
 {
     /// Create a new use case instance
-    pub fn new(
-        recorder: R,
-        transcriber: T,
-        clipboard: C,
-        keystroke: K,
-        notifier: N,
-    ) -> Self {
+    pub fn new(recorder: R, transcriber: T, clipboard: C, keystroke: K, notifier: N) -> Self {
         Self {
             recorder,
             transcriber,
@@ -156,11 +149,14 @@ where
 
         // Notify recording start
         if input.enable_notify {
-            let _ = self.notifier.notify(
-                "SmartScribe",
-                &format!("Recording for {}...", input.duration),
-                NotificationIcon::Recording,
-            ).await;
+            let _ = self
+                .notifier
+                .notify(
+                    "SmartScribe",
+                    &format!("Recording for {}...", input.duration),
+                    NotificationIcon::Recording,
+                )
+                .await;
         }
 
         if let Some(ref cb) = callbacks.on_recording_start {
@@ -168,10 +164,10 @@ where
         }
 
         // Record audio
-        let audio = self.recorder.record(
-            input.duration,
-            callbacks.on_progress,
-        ).await?;
+        let audio = self
+            .recorder
+            .record(input.duration, callbacks.on_progress)
+            .await?;
 
         let audio_size = audio.human_readable_size();
 
@@ -181,11 +177,14 @@ where
 
         // Notify transcription start
         if input.enable_notify {
-            let _ = self.notifier.notify(
-                "SmartScribe",
-                "Transcribing...",
-                NotificationIcon::Processing,
-            ).await;
+            let _ = self
+                .notifier
+                .notify(
+                    "SmartScribe",
+                    "Transcribing...",
+                    NotificationIcon::Processing,
+                )
+                .await;
         }
 
         if let Some(ref cb) = callbacks.on_transcribing_start {
@@ -237,11 +236,14 @@ where
 
         // Notify completion
         if input.enable_notify {
-            let _ = self.notifier.notify(
-                "SmartScribe",
-                "Transcription complete!",
-                NotificationIcon::Success,
-            ).await;
+            let _ = self
+                .notifier
+                .notify(
+                    "SmartScribe",
+                    "Transcription complete!",
+                    NotificationIcon::Success,
+                )
+                .await;
         }
 
         Ok(TranscribeOutput {
