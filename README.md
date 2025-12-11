@@ -1,26 +1,47 @@
 # SmartScribe
 
-AI-powered voice-to-text transcription CLI using Google Gemini.
+[![Release](https://img.shields.io/github/v/release/ThilinaTLM/smart-scribe)](https://github.com/ThilinaTLM/smart-scribe/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+AI-powered voice-to-text transcription CLI using Google Gemini. Record audio from your microphone and get accurate, context-aware transcriptions optimized for different domains like software development, medical, legal, and finance.
 
 ## Features
 
 - Record audio from microphone via FFmpeg
 - Transcribe using Google Gemini with domain-specific context
-- Copy transcription to clipboard
+- Copy transcription to clipboard (Wayland)
 - Type transcription directly into focused window
 - Desktop notifications
 - Daemon mode for signal-based control (hotkey integration)
+- Configurable via CLI, environment variables, or config file
 
 ## Requirements
 
 ### System Dependencies
 
-| Package | Purpose | Install (Arch) |
-|---------|---------|----------------|
-| `ffmpeg` | Audio recording (PulseAudio/Pipewire) | `pacman -S ffmpeg` |
-| `wl-clipboard` | Clipboard support (`wl-copy`) | `pacman -S wl-clipboard` |
-| `xdotool` | Keystroke typing | `pacman -S xdotool` |
-| `libnotify` | Desktop notifications (`notify-send`) | `pacman -S libnotify` |
+**Arch Linux:**
+```bash
+pacman -S ffmpeg wl-clipboard xdotool libnotify
+```
+
+**Ubuntu/Debian:**
+```bash
+apt install ffmpeg wl-clipboard xdotool libnotify-bin
+```
+
+**Fedora:**
+```bash
+dnf install ffmpeg wl-clipboard xdotool libnotify
+```
+
+| Package | Purpose |
+|---------|---------|
+| `ffmpeg` | Audio recording (PulseAudio/Pipewire) |
+| `wl-clipboard` | Clipboard support (`wl-copy`) - Wayland only |
+| `xdotool` | Keystroke typing |
+| `libnotify` | Desktop notifications (`notify-send`) |
+
+> **Note:** For X11, replace `wl-clipboard` with `xclip` or `xsel` (not yet supported in this version).
 
 ### API Key
 
@@ -28,21 +49,26 @@ Get a Google Gemini API key from [Google AI Studio](https://aistudio.google.com/
 
 ## Installation
 
-### Download Binary
+### Download Binary (Recommended)
 
-Download the latest release from [GitHub Releases](../../releases):
+Download the latest release from [GitHub Releases](https://github.com/ThilinaTLM/smart-scribe/releases):
 
 ```bash
-# Download and make executable
+# Download the binary
+curl -LO https://github.com/ThilinaTLM/smart-scribe/releases/latest/download/smart-scribe-linux-x86_64
+
+# Make executable and install
 chmod +x smart-scribe-linux-x86_64
 sudo mv smart-scribe-linux-x86_64 /usr/local/bin/smart-scribe
 ```
 
-### From Source
+### Build from Source
+
+Requires [Rust](https://rustup.rs/) (1.70+):
 
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/ThilinaTLM/smart-scribe.git
 cd smart-scribe
 
 # Build release binary
@@ -57,7 +83,7 @@ sudo cp target/release/smart-scribe /usr/local/bin/
 Configure the API key via config file or environment:
 
 ```bash
-# Option 1: Use config command
+# Option 1: Use config command (recommended)
 smart-scribe config init
 smart-scribe config set api_key YOUR_API_KEY
 
@@ -85,7 +111,7 @@ smart-scribe -c -k -n            # Clipboard + keystroke + notifications
 
 ### Daemon Mode
 
-Run as a background process, controlled by signals:
+Run as a background process, controlled by signals (ideal for hotkey integration):
 
 ```bash
 smart-scribe --daemon -c -n      # Start daemon with clipboard + notifications
@@ -110,8 +136,6 @@ Or use the helper scripts (useful for binding to global hotkeys):
 
 ## CLI Options
 
-### One-Shot Mode
-
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-d, --duration <TIME>` | Recording duration (10s, 1m, 2m30s) | 10s |
@@ -119,15 +143,10 @@ Or use the helper scripts (useful for binding to global hotkeys):
 | `-c, --clipboard` | Copy transcription to clipboard | off |
 | `-k, --keystroke` | Type transcription into focused window | off |
 | `-n, --notify` | Show desktop notifications | off |
+| `--daemon` | Run in daemon mode | off |
+| `--max-duration <TIME>` | Max recording duration (daemon safety limit) | 60s |
 | `-h, --help` | Show help | |
 | `-V, --version` | Show version | |
-
-### Daemon Mode
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--daemon` | Run in daemon mode | off |
-| `--max-duration <TIME>` | Max recording duration (safety limit) | 60s |
 
 ### Config Commands
 
@@ -146,9 +165,9 @@ Config keys: `api_key`, `duration`, `max_duration`, `domain`, `clipboard`, `keys
 | Domain | Description |
 |--------|-------------|
 | `general` | General conversation (default) |
-| `dev` | Software engineering terminology |
-| `medical` | Medical/healthcare terms |
-| `legal` | Legal terminology |
+| `dev` | Software development - code, APIs, technical terms |
+| `medical` | Medical/healthcare terminology |
+| `legal` | Legal terminology and phrases |
 | `finance` | Financial terms and acronyms |
 
 ## Output
@@ -166,17 +185,6 @@ cargo test               # Run tests
 cargo clippy             # Lint
 cargo fmt                # Format
 ```
-
-## Releasing
-
-To create a new release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-GitHub Actions will automatically build the binary and create a release.
 
 ## License
 
