@@ -364,26 +364,26 @@ cargo test
 ### 6.1 Archive TypeScript
 - Files: Various
 - Depends: Phase 5
-- [ ] Tag TypeScript version as v1.x-typescript-final
-- [ ] Remove TypeScript source files (src/ TS files)
-- [ ] Remove package.json, bun.lockb, tsconfig.json, biome.json
-- [ ] Update .gitignore
+- [x] Tag TypeScript version as v1.x-typescript-final
+- [x] Remove TypeScript source files (src/ TS files)
+- [x] Remove package.json, bun.lockb, tsconfig.json, biome.json
+- [x] Update .gitignore
 
 ### 6.2 Update Documentation
 - Files: `README.md`, `CLAUDE.md`
 - Depends: 6.1
-- [ ] Update README for Rust version
-- [ ] Update installation instructions
-- [ ] Update build instructions
-- [ ] Update CLAUDE.md with Rust commands
+- [x] Update README for Rust version
+- [x] Update installation instructions
+- [x] Update build instructions
+- [x] Update CLAUDE.md with Rust commands
 
 ### 6.3 Update CI/CD
 - Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`
 - Depends: 6.1
-- [ ] Remove TypeScript CI jobs
-- [ ] Update release workflow for Rust binary
-- [ ] Add cargo fmt check
-- [ ] Add cargo clippy check
+- [x] Remove TypeScript CI jobs
+- [x] Update release workflow for Rust binary
+- [x] Add cargo fmt check
+- [x] Add cargo clippy check
 
 ### 6.4 Release v2.0.0
 - Files: `CHANGELOG.md`
@@ -408,6 +408,6 @@ git status  # No TypeScript files
 | 2. Application | Complete | 6/6 |
 | 3. Infrastructure | Complete | 6/6 |
 | 4. CLI | Complete | 8/8 |
-| 5. Testing | In Progress | 4/5 |
-| 6. Cleanup | Pending | 0/4 |
-| **Total** | **In Progress** | **32/37** |
+| 5. Testing | Complete | 5/5 |
+| 6. Cleanup | In Progress | 3/4 |
+| **Total** | **In Progress** | **36/37** |
