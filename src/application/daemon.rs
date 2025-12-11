@@ -143,8 +143,9 @@ where
         Ok(())
     }
 
-    /// Stop recording and transcribe
-    pub async fn stop_and_transcribe(&self) -> Result<DaemonOutput, DaemonError> {
+    /// Stop recording and return the audio data
+    /// Call `transcribe_audio` afterwards to complete the transcription
+    pub async fn stop_recording(&self) -> Result<crate::domain::transcription::AudioData, DaemonError> {
         // Transition to processing state
         {
             let mut session = self.session.lock().await;
@@ -153,6 +154,11 @@ where
 
         // Stop recording and get audio
         let audio = self.recorder.stop().await?;
+        Ok(audio)
+    }
+
+    /// Transcribe the audio data and perform output actions
+    pub async fn transcribe_audio(&self, audio: crate::domain::transcription::AudioData) -> Result<DaemonOutput, DaemonError> {
         let audio_size = audio.human_readable_size();
 
         // Notify transcription start
@@ -210,6 +216,12 @@ where
             keystroke_sent,
             audio_size,
         })
+    }
+
+    /// Stop recording and transcribe (convenience method)
+    pub async fn stop_and_transcribe(&self) -> Result<DaemonOutput, DaemonError> {
+        let audio = self.stop_recording().await?;
+        self.transcribe_audio(audio).await
     }
 
     /// Cancel recording without transcription

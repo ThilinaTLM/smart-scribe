@@ -157,18 +157,26 @@ where
                         presenter.daemon_status("Recording...");
                     }
                     DaemonState::Recording => {
-                        // Stop and transcribe
-                        presenter.daemon_status("Processing...");
-                        match use_case.stop_and_transcribe().await {
-                            Ok(output) => {
-                                presenter.output(&output.text);
-                                presenter.daemon_status(&format!(
-                                    "Idle (last: {} audio)",
-                                    output.audio_size
-                                ));
+                        // Stop recording first to get audio size
+                        match use_case.stop_recording().await {
+                            Ok(audio) => {
+                                let audio_size = audio.human_readable_size();
+                                presenter.daemon_status(&format!("Processing ({})...", audio_size));
+
+                                // Now transcribe
+                                match use_case.transcribe_audio(audio).await {
+                                    Ok(output) => {
+                                        presenter.output(&output.text);
+                                        presenter.daemon_status("Idle");
+                                    }
+                                    Err(e) => {
+                                        presenter.error(&format!("Transcription failed: {}", e));
+                                        presenter.daemon_status("Idle (error)");
+                                    }
+                                }
                             }
                             Err(e) => {
-                                presenter.error(&format!("Transcription failed: {}", e));
+                                presenter.error(&format!("Failed to stop recording: {}", e));
                                 presenter.daemon_status("Idle (error)");
                             }
                         }
