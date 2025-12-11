@@ -40,6 +40,7 @@ pub struct TranscribeInput {
     pub enable_notify: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TranscribeInput {
     fn default() -> Self {
         Self {
@@ -66,6 +67,8 @@ pub struct TranscribeOutput {
 }
 
 /// Callbacks for progress and status updates
+#[derive(Default)]
+#[allow(clippy::type_complexity)]
 pub struct TranscribeCallbacks {
     /// Called during recording with (elapsed_ms, total_ms)
     pub on_progress: Option<ProgressCallback>,
@@ -77,18 +80,6 @@ pub struct TranscribeCallbacks {
     pub on_transcribing_start: Option<Box<dyn Fn() + Send + Sync>>,
     /// Called when transcription ends
     pub on_transcribing_end: Option<Box<dyn Fn() + Send + Sync>>,
-}
-
-impl Default for TranscribeCallbacks {
-    fn default() -> Self {
-        Self {
-            on_progress: None,
-            on_recording_start: None,
-            on_recording_end: None,
-            on_transcribing_start: None,
-            on_transcribing_end: None,
-        }
-    }
 }
 
 /// One-shot transcription use case

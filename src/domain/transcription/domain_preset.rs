@@ -6,6 +6,7 @@ use std::str::FromStr;
 use crate::domain::error::InvalidDomainError;
 
 /// All available domain IDs
+#[allow(dead_code)]
 pub const ALL_DOMAINS: &[DomainId] = &[
     DomainId::General,
     DomainId::Dev,

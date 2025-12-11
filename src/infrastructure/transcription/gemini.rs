@@ -91,6 +91,7 @@ struct ResponsePart {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ApiError {
     message: String,
     status: Option<String>,

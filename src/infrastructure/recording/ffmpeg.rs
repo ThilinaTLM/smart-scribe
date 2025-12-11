@@ -1,6 +1,6 @@
 //! FFmpeg-based audio recorder adapter
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -75,7 +75,7 @@ impl FfmpegRecorder {
     }
 
     /// Build FFmpeg args for recording
-    fn build_ffmpeg_args(output_path: &PathBuf, duration_secs: Option<u64>) -> Vec<String> {
+    fn build_ffmpeg_args(output_path: &Path, duration_secs: Option<u64>) -> Vec<String> {
         let mut args = vec![
             "-f".to_string(),
             "pulse".to_string(),

@@ -3,8 +3,9 @@
 use std::fmt;
 
 /// Supported audio MIME types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AudioMimeType {
+    #[default]
     Ogg,
     Mp3,
     Mpeg,
@@ -41,12 +42,6 @@ impl AudioMimeType {
 impl fmt::Display for AudioMimeType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for AudioMimeType {
-    fn default() -> Self {
-        Self::Ogg
     }
 }
 

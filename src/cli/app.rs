@@ -67,16 +67,16 @@ pub async fn run_oneshot(options: TranscribeOptions) -> ExitCode {
             // Progress handled by spinner
         })),
         on_recording_start: Some(Box::new(|| {
-            eprintln!("{} Recording...", "⠋".to_string());
+            eprintln!("⠋ Recording...");
         })),
         on_recording_end: Some(Box::new(|size: &str| {
-            eprintln!("{} Recording complete ({})", "✓", size);
+            eprintln!("✓ Recording complete ({})", size);
         })),
         on_transcribing_start: Some(Box::new(|| {
-            eprintln!("{} Transcribing...", "⠋".to_string());
+            eprintln!("⠋ Transcribing...");
         })),
         on_transcribing_end: Some(Box::new(|| {
-            eprintln!("{} Transcription complete", "✓");
+            eprintln!("✓ Transcription complete");
         })),
     };
 
