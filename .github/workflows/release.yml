@@ -6,23 +6,30 @@ on:
       - 'v*.*.*'
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - run: bun install
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
-      - run: bun run check
+      - name: Run tests
+        run: cargo test --release
 
-      - run: bun build --compile --minify src/index.ts --outfile dist/smart-scribe-linux-x86_64
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Rename binary
+        run: mv target/release/smart-scribe target/release/smart-scribe-linux-x86_64
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/smart-scribe-linux-x86_64
+          files: target/release/smart-scribe-linux-x86_64
           generate_release_notes: true
