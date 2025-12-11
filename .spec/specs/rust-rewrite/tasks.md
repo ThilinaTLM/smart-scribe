@@ -385,19 +385,19 @@ cargo test
 - [x] Add cargo fmt check
 - [x] Add cargo clippy check
 
-### 6.4 Release v2.0.0
+### 6.4 Release v1.0.0
 - Files: `CHANGELOG.md`
 - Depends: 6.2, 6.3
 - [ ] Write CHANGELOG entry
-- [ ] Create git tag v2.0.0
+- [ ] Create git tag v1.0.0
 - [ ] Push release
 - [ ] Verify binary release artifacts
 
 ---
-**Checkpoint 6:** Clean Rust-only repo, v2.0.0 released.
+**Checkpoint 6:** Clean Rust-only repo, v1.0.0 released.
 ```bash
 git status  # No TypeScript files
-./target/release/smart-scribe --version  # v2.0.0
+./target/release/smart-scribe --version  # v1.0.0
 ```
 
 ## Progress Summary

@@ -192,7 +192,7 @@ src/
 - Archive TypeScript source
 - Update README
 - Update CLAUDE.md
-- Release v2.0.0
+- Release v1.0.0
 
 **Validation:** Clean repo with Rust-only implementation.
 
