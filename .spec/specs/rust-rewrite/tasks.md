@@ -329,18 +329,18 @@ cargo build --release
 ### 5.3 Transcription Integration Tests [P]
 - Files: `tests/transcription_tests.rs`
 - Depends: 3.2
-- [ ] Test successful transcription (requires API key)
-- [ ] Test invalid API key error
-- [ ] Mark as #[ignore] for CI
+- [x] Test successful transcription (requires API key)
+- [x] Test invalid API key error
+- [x] Mark as #[ignore] for CI
 
 ### 5.4 Comparison Testing
 - Files: `scripts/compare-versions.sh`
 - Depends: Phase 4
-- [ ] Create comparison script
-- [ ] Test CLI option compatibility
-- [ ] Test output format consistency
-- [ ] Test exit codes
-- [ ] Document any differences
+- [x] Create comparison script
+- [x] Test CLI option compatibility
+- [x] Test output format consistency
+- [x] Test exit codes
+- [x] Document any differences
 
 ### 5.5 Error Scenario Testing
 - Files: `tests/error_tests.rs`
@@ -408,6 +408,6 @@ git status  # No TypeScript files
 | 2. Application | Complete | 6/6 |
 | 3. Infrastructure | Complete | 6/6 |
 | 4. CLI | Complete | 8/8 |
-| 5. Testing | In Progress | 2/5 |
+| 5. Testing | In Progress | 4/5 |
 | 6. Cleanup | Pending | 0/4 |
-| **Total** | **In Progress** | **30/37** |
+| **Total** | **In Progress** | **32/37** |
