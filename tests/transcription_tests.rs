@@ -160,7 +160,7 @@ fn audio_data_formats() {
 fn system_prompt_content() {
     // Verify prompts contain expected content
     let general = SystemPrompt::build(DomainId::General);
-    assert!(general.content().contains("voice-to-text"));
+    assert!(general.content().contains("transcription tool"));
 
     let dev = SystemPrompt::build(DomainId::Dev);
     assert!(dev.content().contains("programming") || dev.content().contains("Software"));

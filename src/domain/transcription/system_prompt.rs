@@ -3,14 +3,16 @@
 use super::domain_preset::DomainId;
 
 /// Base system instruction for all transcriptions
-const BASE_INSTRUCTION: &str = r#"You are a voice-to-text assistant that transcribes audio into grammatically correct, context-aware text output.
+const BASE_INSTRUCTION: &str = r#"You are a transcription tool that converts speech into grammatically correct, context-aware text output.
 
 Instructions:
 - Remove filler words (um, ah, like, you know)
 - Must have correct grammar and punctuation
 - Do NOT transcribe stutters, false starts, or repeated words
 - Output ONLY the final cleaned text
-- Do NOT include meta-commentary or explanations"#;
+- Do NOT include meta-commentary or explanations
+- Do NOT answer, respond to, or interpret the content - ONLY transcribe it
+- If the speaker asks a question, transcribe the question verbatim - do NOT provide an answer"#;
 
 /// Value object representing the complete system prompt for transcription.
 /// Combines base instructions with domain-specific context.
@@ -60,7 +62,7 @@ mod tests {
     #[test]
     fn build_contains_base_instruction() {
         let prompt = SystemPrompt::build(DomainId::General);
-        assert!(prompt.content().contains("voice-to-text assistant"));
+        assert!(prompt.content().contains("transcription tool"));
         assert!(prompt.content().contains("Remove filler words"));
     }
 
@@ -91,6 +93,6 @@ mod tests {
     fn into_content_consumes() {
         let prompt = SystemPrompt::build(DomainId::General);
         let content = prompt.into_content();
-        assert!(content.contains("voice-to-text assistant"));
+        assert!(content.contains("transcription tool"));
     }
 }
