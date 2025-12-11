@@ -17,7 +17,6 @@ AI-powered voice-to-text transcription CLI using Google Gemini.
 
 | Package | Purpose | Install (Arch) |
 |---------|---------|----------------|
-| `bun` | JavaScript runtime | `yay -S bun-bin` |
 | `ffmpeg` | Audio recording (PulseAudio/Pipewire) | `pacman -S ffmpeg` |
 | `wl-clipboard` | Clipboard support (`wl-copy`) | `pacman -S wl-clipboard` |
 | `xdotool` | Keystroke typing | `pacman -S xdotool` |
@@ -44,23 +43,30 @@ sudo mv smart-scribe-linux-x86_64 /usr/local/bin/smart-scribe
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd smart-scribe-ts
+cd smart-scribe
 
-# Install dependencies
-bun install
+# Build release binary
+cargo build --release
 
-# Create environment file
-echo "GEMINI_API_KEY=your_api_key_here" > .env
-
-# Link CLI globally (optional)
-bun link
+# Install to PATH
+sudo cp target/release/smart-scribe /usr/local/bin/
 ```
 
-### Build Binary
+### Configuration
+
+Configure the API key via config file or environment:
 
 ```bash
-bun run build
-# Output: dist/smart-scribe
+# Option 1: Use config command
+smart-scribe config init
+smart-scribe config set api_key YOUR_API_KEY
+
+# Option 2: Environment variable
+export GEMINI_API_KEY=your_api_key_here
+
+# Option 3: Create config file manually
+mkdir -p ~/.config/smart-scribe
+echo 'api_key = "your_api_key_here"' > ~/.config/smart-scribe/config.toml
 ```
 
 ## Usage
@@ -114,7 +120,7 @@ Or use the helper scripts (useful for binding to global hotkeys):
 | `-k, --keystroke` | Type transcription into focused window | off |
 | `-n, --notify` | Show desktop notifications | off |
 | `-h, --help` | Show help | |
-| `-v, --version` | Show version | |
+| `-V, --version` | Show version | |
 
 ### Daemon Mode
 
@@ -122,6 +128,18 @@ Or use the helper scripts (useful for binding to global hotkeys):
 |--------|-------------|---------|
 | `--daemon` | Run in daemon mode | off |
 | `--max-duration <TIME>` | Max recording duration (safety limit) | 60s |
+
+### Config Commands
+
+```bash
+smart-scribe config init              # Create config file with defaults
+smart-scribe config set <key> <value> # Set a config value
+smart-scribe config get <key>         # Get a config value
+smart-scribe config list              # List all config values
+smart-scribe config path              # Show config file path
+```
+
+Config keys: `api_key`, `duration`, `max_duration`, `domain`, `clipboard`, `keystroke`, `notify`
 
 ## Domain Presets
 
@@ -139,13 +157,23 @@ Or use the helper scripts (useful for binding to global hotkeys):
 - Status messages are written to **stderr**
 - Use `-c` to copy to clipboard, `-k` to type into focused window
 
+## Development
+
+```bash
+cargo build              # Debug build
+cargo build --release    # Release build
+cargo test               # Run tests
+cargo clippy             # Lint
+cargo fmt                # Format
+```
+
 ## Releasing
 
 To create a new release:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 GitHub Actions will automatically build the binary and create a release.
