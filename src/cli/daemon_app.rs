@@ -147,6 +147,7 @@ where
         match signal {
             Some(DaemonSignal::Toggle) => {
                 let current_state = use_case.state().await;
+                presenter.info(&format!("Processing toggle, state={:?}", current_state));
                 match current_state {
                     DaemonState::Idle => {
                         // Start recording
@@ -189,6 +190,7 @@ where
             }
             Some(DaemonSignal::Cancel) => {
                 let current_state = use_case.state().await;
+                presenter.info(&format!("Processing cancel, state={:?}", current_state));
                 if current_state == DaemonState::Recording {
                     if let Err(e) = use_case.cancel().await {
                         presenter.error(&format!("Failed to cancel: {}", e));
@@ -200,6 +202,7 @@ where
                 }
             }
             Some(DaemonSignal::Shutdown) => {
+                presenter.info("Processing shutdown");
                 let current_state = use_case.state().await;
                 if current_state == DaemonState::Recording {
                     // Cancel any in-progress recording

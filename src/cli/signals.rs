@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use colored::Colorize;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 
@@ -77,6 +78,7 @@ impl DaemonSignalHandler {
         tokio::spawn(async move {
             loop {
                 sigusr1.recv().await;
+                eprintln!("{} Received SIGUSR1 (toggle)", "↓".cyan());
                 let _ = tx_usr1.send(DaemonSignal::Toggle).await;
             }
         });
@@ -87,6 +89,7 @@ impl DaemonSignalHandler {
         tokio::spawn(async move {
             loop {
                 sigusr2.recv().await;
+                eprintln!("{} Received SIGUSR2 (cancel)", "↓".cyan());
                 let _ = tx_usr2.send(DaemonSignal::Cancel).await;
             }
         });
@@ -96,6 +99,7 @@ impl DaemonSignalHandler {
         let mut sigint = signal(SignalKind::interrupt())?;
         tokio::spawn(async move {
             sigint.recv().await;
+            eprintln!("{} Received SIGINT (shutdown)", "↓".cyan());
             let _ = tx_int.send(DaemonSignal::Shutdown).await;
         });
 
@@ -104,6 +108,7 @@ impl DaemonSignalHandler {
         let mut sigterm = signal(SignalKind::terminate())?;
         tokio::spawn(async move {
             sigterm.recv().await;
+            eprintln!("{} Received SIGTERM (shutdown)", "↓".cyan());
             let _ = tx_term.send(DaemonSignal::Shutdown).await;
         });
 
