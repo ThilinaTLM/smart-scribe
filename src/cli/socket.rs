@@ -86,17 +86,14 @@ impl DaemonSocketServer {
     /// This runs in a loop, accepting connections and processing commands.
     /// Each command is sent to the provided channel.
     /// The state_fn is called to get current daemon state for status queries.
-    pub async fn run<F>(
-        &self,
-        tx: mpsc::Sender<DaemonSignal>,
-        state_fn: F,
-    ) -> io::Result<()>
+    pub async fn run<F>(&self, tx: mpsc::Sender<DaemonSignal>, state_fn: F) -> io::Result<()>
     where
         F: Fn() -> DaemonState + Send + Sync + 'static,
     {
-        let listener = self.listener.as_ref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotConnected, "Socket not bound")
-        })?;
+        let listener = self
+            .listener
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Socket not bound"))?;
 
         loop {
             match listener.accept().await {
@@ -152,13 +149,11 @@ async fn handle_connection(
             let _ = tx.send(DaemonSignal::Cancel).await;
             "ok\n"
         }
-        "status" => {
-            match current_state {
-                DaemonState::Idle => "idle\n",
-                DaemonState::Recording => "recording\n",
-                DaemonState::Processing => "processing\n",
-            }
-        }
+        "status" => match current_state {
+            DaemonState::Idle => "idle\n",
+            DaemonState::Recording => "recording\n",
+            DaemonState::Processing => "processing\n",
+        },
         _ => "error: unknown command\n",
     };
 
