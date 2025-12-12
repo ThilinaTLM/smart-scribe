@@ -39,8 +39,8 @@ pub async fn handle_daemon_command(
             presenter.info(&format!("Daemon status: {}", response));
         }
         _ => {
-            if response.starts_with("error:") {
-                return Err(response[6..].trim().to_string());
+            if let Some(stripped) = response.strip_prefix("error:") {
+                return Err(stripped.trim().to_string());
             }
             presenter.info(&format!("Command sent: {}", cmd));
         }
