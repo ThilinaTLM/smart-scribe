@@ -1,6 +1,7 @@
 //! Daemon app runner
 
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use tokio::time::timeout;
@@ -16,6 +17,7 @@ use super::args::DaemonOptions;
 use super::pid_file::{PidFile, PidFileError};
 use super::presenter::Presenter;
 use super::signals::{DaemonSignal, DaemonSignalHandler};
+use super::socket::{DaemonSocketServer, SocketPath};
 
 /// Run daemon mode
 pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
@@ -70,8 +72,8 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
         config,
     );
 
-    // Setup signal handler
-    let mut signals = match DaemonSignalHandler::new().await {
+    // Setup signal handler (returns handler + sender for socket server)
+    let (mut signals, signal_tx) = match DaemonSignalHandler::new().await {
         Ok(s) => s,
         Err(e) => {
             presenter.error(&format!("Failed to setup signal handler: {}", e));
@@ -79,17 +81,41 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
         }
     };
 
-    presenter.daemon_status("Started, waiting for signals...");
+    // Setup socket server
+    let socket_path = SocketPath::new();
+    let mut socket_server = DaemonSocketServer::new(socket_path.clone());
+
+    if let Err(e) = socket_server.bind() {
+        presenter.error(&format!("Failed to bind socket: {}", e));
+        return ExitCode::from(EXIT_ERROR);
+    }
+
+    // Wrap state in Arc<Mutex> for sharing with socket server
+    let state = Arc::new(Mutex::new(DaemonState::Idle));
+    let state_for_socket = Arc::clone(&state);
+
+    // Spawn socket server task
+    tokio::spawn(async move {
+        let _ = socket_server
+            .run(signal_tx, move || {
+                // Use std::sync::Mutex - safe because lock is very brief
+                *state_for_socket.lock().unwrap_or_else(|e| e.into_inner())
+            })
+            .await;
+    });
+
+    presenter.daemon_status("Started, waiting for commands...");
     presenter.info(&format!(
-        "PID: {} | SIGUSR1: toggle | SIGUSR2: cancel | SIGINT: exit",
-        std::process::id()
+        "PID: {} | Socket: {} | SIGINT: exit",
+        std::process::id(),
+        socket_path.path().display()
     ));
 
     // Main signal loop
     let max_duration_ms = options.max_duration.as_millis();
-    let result = daemon_loop(&use_case, &mut signals, &presenter, max_duration_ms).await;
+    let result = daemon_loop(&use_case, &mut signals, &presenter, max_duration_ms, &state).await;
 
-    // Cleanup
+    // Cleanup (socket server Drop will clean up socket file)
     let _ = pid_file.release();
 
     if result {
@@ -104,6 +130,7 @@ async fn daemon_loop<R, T, C, K, N>(
     signals: &mut DaemonSignalHandler,
     presenter: &Presenter,
     max_duration_ms: u64,
+    shared_state: &Arc<Mutex<DaemonState>>,
 ) -> bool
 where
     R: crate::application::ports::UnboundedRecorder,
@@ -114,6 +141,10 @@ where
 {
     loop {
         let state = use_case.state().await;
+        // Update shared state for socket server
+        if let Ok(mut guard) = shared_state.lock() {
+            *guard = state;
+        }
 
         // If recording, use timeout for max duration check
         let signal = if state == DaemonState::Recording {

@@ -12,7 +12,7 @@ AI-powered voice-to-text transcription CLI using Google Gemini. Record audio fro
 - Copy transcription to clipboard (Wayland)
 - Type transcription directly into focused window
 - Desktop notifications
-- Daemon mode for signal-based control (hotkey integration)
+- Daemon mode with CLI control (hotkey integration)
 - Configurable via CLI, environment variables, or config file
 
 ## Requirements
@@ -111,7 +111,7 @@ smart-scribe -c -k -n            # Clipboard + keystroke + notifications
 
 ### Daemon Mode
 
-Run as a background process, controlled by signals (ideal for hotkey integration):
+Run as a background process (ideal for hotkey integration):
 
 ```bash
 smart-scribe --daemon -c -n      # Start daemon with clipboard + notifications
@@ -119,20 +119,15 @@ smart-scribe --daemon -D dev     # Daemon with dev domain
 smart-scribe --daemon --max-duration 5m  # 5 minute max recording
 ```
 
-Control the daemon with signals:
+Control the daemon with CLI commands:
 
 ```bash
-kill -SIGUSR1 $(cat /tmp/smart-scribe.pid)   # Toggle (start or stop+transcribe)
-kill -SIGUSR2 $(cat /tmp/smart-scribe.pid)   # Cancel recording
-kill -SIGINT  $(cat /tmp/smart-scribe.pid)   # Exit daemon
+smart-scribe daemon toggle   # Toggle recording (start or stop+transcribe)
+smart-scribe daemon cancel   # Cancel current recording
+smart-scribe daemon status   # Show daemon state (idle/recording/processing)
 ```
 
-Or use the helper scripts (useful for binding to global hotkeys):
-
-```bash
-./scripts/signal-toggle.sh   # Toggle recording
-./scripts/signal-cancel.sh   # Cancel recording
-```
+For hotkey integration, bind these commands to your preferred shortcuts.
 
 ## CLI Options
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SmartScribe is a Rust CLI tool for AI-powered audio transcription using Google Gemini. It records from the microphone using FFmpeg and outputs context-aware text to stdout. Supports both one-shot mode (fixed duration) and daemon mode (signal-controlled recording).
+SmartScribe is a Rust CLI tool for AI-powered audio transcription using Google Gemini. It records from the microphone using FFmpeg and outputs context-aware text to stdout. Supports both one-shot mode (fixed duration) and daemon mode (socket-controlled recording).
 
 ## Development Commands
 
@@ -51,8 +51,9 @@ smart-scribe -c -k               # Copy to clipboard + type into window
 **Daemon mode:**
 ```bash
 smart-scribe --daemon            # Run as background daemon
-./scripts/signal-toggle.sh       # SIGUSR1: toggle recording
-./scripts/signal-cancel.sh       # SIGUSR2: cancel recording
+smart-scribe daemon toggle       # Toggle recording (start/stop)
+smart-scribe daemon cancel       # Cancel current recording
+smart-scribe daemon status       # Show daemon state (idle/recording/processing)
 ```
 
 **Config commands:**
@@ -70,7 +71,7 @@ smart-scribe config path
 - `-c, --clipboard` - Copy result to clipboard (wl-copy)
 - `-k, --keystroke` - Type result into focused window (xdotool)
 - `-n, --notify` - Show desktop notifications
-- `--daemon` - Run as daemon (signal-controlled)
+- `--daemon` - Run as daemon (socket-controlled)
 - `--max-duration <TIME>` - Safety limit for daemon mode (default: 60s)
 
 ## Architecture
@@ -94,8 +95,9 @@ src/
 
 **Data Flow (Daemon):**
 1. `DaemonTranscriptionUseCase` manages `DaemonSession` state machine
-2. Signal handlers: SIGUSR1 (toggle), SIGUSR2 (cancel), SIGINT (exit)
-3. States: IDLE → RECORDING → PROCESSING → IDLE
+2. Unix Domain Socket server receives commands: toggle, cancel, status
+3. SIGINT/SIGTERM for graceful shutdown
+4. States: IDLE → RECORDING → PROCESSING → IDLE
 
 **Key Abstractions (Ports → Adapters):**
 - `AudioRecorder` / `UnboundedRecorder` traits → `FfmpegRecorder`

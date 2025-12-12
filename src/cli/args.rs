@@ -32,7 +32,7 @@ pub struct Cli {
     #[arg(short = 'n', long)]
     pub notify: bool,
 
-    /// Run as daemon, controlled by signals
+    /// Run as daemon (control via: smart-scribe daemon toggle/cancel/status)
     #[arg(long)]
     pub daemon: bool,
 
@@ -45,7 +45,7 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
-/// Config subcommands
+/// Subcommands
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Manage configuration
@@ -53,6 +53,22 @@ pub enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Send commands to running daemon
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+}
+
+/// Daemon control actions
+#[derive(Subcommand, Debug, Clone, Copy)]
+pub enum DaemonAction {
+    /// Toggle recording (start if idle, stop if recording)
+    Toggle,
+    /// Cancel current recording without transcribing
+    Cancel,
+    /// Show daemon status
+    Status,
 }
 
 /// Config action subcommands

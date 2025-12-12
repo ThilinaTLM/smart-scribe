@@ -54,45 +54,29 @@ impl Default for ShutdownSignal {
 /// Daemon signals
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonSignal {
-    /// Toggle recording (SIGUSR1)
+    /// Toggle recording
     Toggle,
-    /// Cancel recording (SIGUSR2)
+    /// Cancel recording
     Cancel,
     /// Shutdown daemon (SIGINT/SIGTERM)
     Shutdown,
 }
 
 /// Daemon signal handler
+///
+/// Handles OS shutdown signals (SIGINT/SIGTERM) and provides a channel
+/// for receiving daemon commands from other sources (e.g., socket server).
 pub struct DaemonSignalHandler {
     receiver: mpsc::Receiver<DaemonSignal>,
 }
 
 impl DaemonSignalHandler {
-    /// Create a new daemon signal handler and start listening
-    pub async fn new() -> Result<Self, std::io::Error> {
+    /// Create a new daemon signal handler and start listening for shutdown signals.
+    ///
+    /// Returns the handler and a sender that can be used by other sources
+    /// (like a socket server) to send commands to the daemon loop.
+    pub async fn new() -> Result<(Self, mpsc::Sender<DaemonSignal>), std::io::Error> {
         let (tx, rx) = mpsc::channel(10);
-
-        // Setup SIGUSR1 handler (toggle)
-        let tx_usr1 = tx.clone();
-        let mut sigusr1 = signal(SignalKind::user_defined1())?;
-        tokio::spawn(async move {
-            loop {
-                sigusr1.recv().await;
-                eprintln!("{} Received SIGUSR1 (toggle)", "↓".cyan());
-                let _ = tx_usr1.send(DaemonSignal::Toggle).await;
-            }
-        });
-
-        // Setup SIGUSR2 handler (cancel)
-        let tx_usr2 = tx.clone();
-        let mut sigusr2 = signal(SignalKind::user_defined2())?;
-        tokio::spawn(async move {
-            loop {
-                sigusr2.recv().await;
-                eprintln!("{} Received SIGUSR2 (cancel)", "↓".cyan());
-                let _ = tx_usr2.send(DaemonSignal::Cancel).await;
-            }
-        });
 
         // Setup SIGINT handler (shutdown)
         let tx_int = tx.clone();
@@ -104,7 +88,7 @@ impl DaemonSignalHandler {
         });
 
         // Setup SIGTERM handler (shutdown)
-        let tx_term = tx;
+        let tx_term = tx.clone();
         let mut sigterm = signal(SignalKind::terminate())?;
         tokio::spawn(async move {
             sigterm.recv().await;
@@ -112,7 +96,7 @@ impl DaemonSignalHandler {
             let _ = tx_term.send(DaemonSignal::Shutdown).await;
         });
 
-        Ok(Self { receiver: rx })
+        Ok((Self { receiver: rx }, tx))
     }
 
     /// Wait for the next signal

@@ -9,6 +9,7 @@ use smart_scribe::cli::{
     args::{Cli, Commands},
     config_cmd::handle_config_command,
     daemon_app::run_daemon,
+    daemon_cmd::handle_daemon_command,
     presenter::Presenter,
     DaemonOptions, TranscribeOptions,
 };
@@ -21,14 +22,24 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let presenter = Presenter::new();
 
-    // Handle config subcommand
-    if let Some(Commands::Config { action }) = cli.command {
-        let store = XdgConfigStore::new();
-        if let Err(e) = handle_config_command(action, &store, &presenter).await {
-            presenter.error(&e.to_string());
-            return ExitCode::from(EXIT_ERROR);
+    // Handle subcommands
+    match cli.command {
+        Some(Commands::Config { action }) => {
+            let store = XdgConfigStore::new();
+            if let Err(e) = handle_config_command(action, &store, &presenter).await {
+                presenter.error(&e.to_string());
+                return ExitCode::from(EXIT_ERROR);
+            }
+            return ExitCode::SUCCESS;
         }
-        return ExitCode::SUCCESS;
+        Some(Commands::Daemon { action }) => {
+            if let Err(e) = handle_daemon_command(action, &presenter).await {
+                presenter.error(&e);
+                return ExitCode::from(EXIT_ERROR);
+            }
+            return ExitCode::SUCCESS;
+        }
+        None => {}
     }
 
     // Build CLI config from args
