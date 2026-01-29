@@ -13,7 +13,7 @@ pub mod transcription;
 // Re-export adapters
 pub use clipboard::WaylandClipboard;
 pub use config::XdgConfigStore;
-pub use keystroke::XdotoolKeystroke;
+pub use keystroke::{create_keystroke, KeystrokeTool, NoOpKeystroke, YdotoolKeystroke};
 pub use notification::NotifySendNotifier;
 pub use recording::FfmpegRecorder;
 pub use transcription::GeminiTranscriber;

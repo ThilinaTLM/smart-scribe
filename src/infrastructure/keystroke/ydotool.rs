@@ -1,4 +1,4 @@
-//! Xdotool keystroke adapter for X11 support
+//! Ydotool keystroke adapter for Wayland support
 
 use std::process::Stdio;
 
@@ -7,28 +7,28 @@ use tokio::process::Command;
 
 use crate::application::ports::{Keystroke, KeystrokeError};
 
-/// Xdotool keystroke adapter for X11 keystroke injection
+/// Ydotool keystroke adapter for Wayland keystroke injection
 ///
-/// Uses xdotool which works on X11 systems.
-pub struct XdotoolKeystroke;
+/// Requires ydotoold daemon to be running and user to be in the input group.
+pub struct YdotoolKeystroke;
 
-impl XdotoolKeystroke {
-    /// Create a new xdotool keystroke adapter
+impl YdotoolKeystroke {
+    /// Create a new ydotool keystroke adapter
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for XdotoolKeystroke {
+impl Default for YdotoolKeystroke {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl Keystroke for XdotoolKeystroke {
+impl Keystroke for YdotoolKeystroke {
     async fn type_text(&self, text: &str) -> Result<(), KeystrokeError> {
-        let status = Command::new("xdotool")
+        let status = Command::new("ydotool")
             .args(["type", "--", text])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -37,7 +37,7 @@ impl Keystroke for XdotoolKeystroke {
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    KeystrokeError::XdotoolNotFound
+                    KeystrokeError::YdotoolNotAvailable
                 } else {
                     KeystrokeError::TypeFailed(e.to_string())
                 }
@@ -45,7 +45,7 @@ impl Keystroke for XdotoolKeystroke {
 
         if !status.success() {
             return Err(KeystrokeError::TypeFailed(format!(
-                "xdotool exited with status: {}",
+                "ydotool exited with status: {}",
                 status
             )));
         }

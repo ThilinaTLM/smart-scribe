@@ -212,6 +212,18 @@ where
         let keystroke_sent = if input.enable_keystroke {
             match self.keystroke.type_text(&text).await {
                 Ok(()) => true,
+                Err(KeystrokeError::NoToolAvailable) => {
+                    eprintln!("Warning: no keystroke tool available, skipping keystroke");
+                    false
+                }
+                Err(KeystrokeError::YdotoolNotAvailable) => {
+                    eprintln!("Warning: ydotool not available, skipping keystroke");
+                    false
+                }
+                Err(KeystrokeError::WtypeNotFound) => {
+                    eprintln!("Warning: wtype not found, skipping keystroke");
+                    false
+                }
                 Err(KeystrokeError::XdotoolNotFound) => {
                     eprintln!("Warning: xdotool not found, skipping keystroke");
                     false

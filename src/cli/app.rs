@@ -8,8 +8,8 @@ use crate::application::ports::ConfigStore;
 use crate::application::{TranscribeCallbacks, TranscribeInput, TranscribeRecordingUseCase};
 use crate::domain::config::AppConfig;
 use crate::infrastructure::{
-    FfmpegRecorder, GeminiTranscriber, NotifySendNotifier, WaylandClipboard, XdgConfigStore,
-    XdotoolKeystroke,
+    create_keystroke, FfmpegRecorder, GeminiTranscriber, NoOpKeystroke, NotifySendNotifier,
+    WaylandClipboard, XdgConfigStore,
 };
 
 use super::args::TranscribeOptions;
@@ -45,8 +45,21 @@ pub async fn run_oneshot(options: TranscribeOptions) -> ExitCode {
     let recorder = FfmpegRecorder::new();
     let transcriber = GeminiTranscriber::new(api_key);
     let clipboard = WaylandClipboard::new();
-    let keystroke = XdotoolKeystroke::new();
     let notifier = NotifySendNotifier::new();
+
+    // Detect keystroke tool
+    let keystroke: Box<dyn crate::application::ports::Keystroke> = match create_keystroke().await {
+        Ok((ks, tool)) => {
+            eprintln!("Keystroke: using {}", tool);
+            ks
+        }
+        Err(e) => {
+            if options.keystroke {
+                presenter.warn(&format!("Keystroke disabled: {}", e));
+            }
+            Box::new(NoOpKeystroke::new())
+        }
+    };
 
     // Create use case
     let use_case =

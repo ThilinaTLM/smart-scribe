@@ -1,4 +1,4 @@
-//! Xdotool keystroke adapter for X11 support
+//! Wtype keystroke adapter for Wayland support
 
 use std::process::Stdio;
 
@@ -7,29 +7,29 @@ use tokio::process::Command;
 
 use crate::application::ports::{Keystroke, KeystrokeError};
 
-/// Xdotool keystroke adapter for X11 keystroke injection
+/// Wtype keystroke adapter for Wayland keystroke injection
 ///
-/// Uses xdotool which works on X11 systems.
-pub struct XdotoolKeystroke;
+/// Uses the wtype tool which is a Wayland-native text input tool.
+pub struct WtypeKeystroke;
 
-impl XdotoolKeystroke {
-    /// Create a new xdotool keystroke adapter
+impl WtypeKeystroke {
+    /// Create a new wtype keystroke adapter
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for XdotoolKeystroke {
+impl Default for WtypeKeystroke {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl Keystroke for XdotoolKeystroke {
+impl Keystroke for WtypeKeystroke {
     async fn type_text(&self, text: &str) -> Result<(), KeystrokeError> {
-        let status = Command::new("xdotool")
-            .args(["type", "--", text])
+        let status = Command::new("wtype")
+            .arg(text)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -37,7 +37,7 @@ impl Keystroke for XdotoolKeystroke {
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    KeystrokeError::XdotoolNotFound
+                    KeystrokeError::WtypeNotFound
                 } else {
                     KeystrokeError::TypeFailed(e.to_string())
                 }
@@ -45,7 +45,7 @@ impl Keystroke for XdotoolKeystroke {
 
         if !status.success() {
             return Err(KeystrokeError::TypeFailed(format!(
-                "xdotool exited with status: {}",
+                "wtype exited with status: {}",
                 status
             )));
         }

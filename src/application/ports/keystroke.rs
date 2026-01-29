@@ -6,7 +6,18 @@ use thiserror::Error;
 /// Keystroke errors
 #[derive(Debug, Clone, Error)]
 pub enum KeystrokeError {
-    #[error("xdotool not found. Please install xdotool.")]
+    #[error(
+        "No keystroke tool available. Install ydotool (with ydotoold running), wtype, or xdotool."
+    )]
+    NoToolAvailable,
+
+    #[error("ydotool not available. Ensure ydotool is installed and ydotoold daemon is running.")]
+    YdotoolNotAvailable,
+
+    #[error("wtype not found. Please install wtype for Wayland keystroke support.")]
+    WtypeNotFound,
+
+    #[error("xdotool not found. Please install xdotool for X11 keystroke support.")]
     XdotoolNotFound,
 
     #[error("Failed to type text: {0}")]
@@ -24,4 +35,12 @@ pub trait Keystroke: Send + Sync {
     /// # Returns
     /// Ok(()) on success, error otherwise
     async fn type_text(&self, text: &str) -> Result<(), KeystrokeError>;
+}
+
+/// Blanket implementation for boxed keystroke types
+#[async_trait]
+impl Keystroke for Box<dyn Keystroke> {
+    async fn type_text(&self, text: &str) -> Result<(), KeystrokeError> {
+        self.as_ref().type_text(text).await
+    }
 }

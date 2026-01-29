@@ -198,7 +198,10 @@ where
         let keystroke_sent = if self.config.enable_keystroke {
             match self.keystroke.type_text(&text).await {
                 Ok(()) => true,
-                Err(KeystrokeError::XdotoolNotFound) => false,
+                Err(KeystrokeError::NoToolAvailable)
+                | Err(KeystrokeError::YdotoolNotAvailable)
+                | Err(KeystrokeError::WtypeNotFound)
+                | Err(KeystrokeError::XdotoolNotFound) => false,
                 Err(_) => false,
             }
         } else {
