@@ -144,6 +144,7 @@ where
 
     writer.write_all(response.as_bytes()).await?;
     writer.flush().await?;
+    writer.shutdown().await?;
 
     Ok(())
 }
