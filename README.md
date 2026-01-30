@@ -55,15 +55,15 @@ irm https://raw.githubusercontent.com/ThilinaTLM/smart-scribe/main/scripts/insta
 
 ### Platform Support
 
-| Feature         |     Linux     |    macOS    |  Windows   |
-| --------------- | :-----------: | :---------: | :--------: |
-| Audio Recording |     cpal      |    cpal     |    cpal    |
-| Clipboard       |    arboard    |   arboard   |  arboard   |
-| Keystroke       | auto-detect\* |   native    |   native   |
-| Notifications   |  notify-rust  |   native    |   native   |
-| Daemon Mode     |  Unix socket  | Unix socket | Named pipe |
+| Feature         |    Linux     |    macOS    |  Windows   |
+| --------------- | :----------: | :---------: | :--------: |
+| Audio Recording |     cpal     |    cpal     |    cpal    |
+| Clipboard       |   arboard    |   arboard   |  arboard   |
+| Keystroke       | configurable |   native    |   native   |
+| Notifications   | notify-rust  |   native    |   native   |
+| Daemon Mode     | Unix socket  | Unix socket | Named pipe |
 
-\*Linux keystroke detection: ydotool > wtype > xdotool > enigo
+Linux keystroke: `enigo` (default) or native tools via `--keystroke-tool`
 
 ## Usage
 
@@ -127,15 +127,16 @@ smart-scribe config path              # Show config file location
 
 ### CLI Options
 
-| Option                  | Description                         | Default |
-| ----------------------- | ----------------------------------- | ------- |
-| `-d, --duration <TIME>` | Recording duration (10s, 1m, 2m30s) | 10s     |
-| `-D, --domain <DOMAIN>` | Domain preset                       | general |
-| `-c, --clipboard`       | Copy to clipboard                   | off     |
-| `-k, --keystroke`       | Type into focused window            | off     |
-| `-n, --notify`          | Desktop notifications               | off     |
-| `--daemon`              | Run in daemon mode                  | off     |
-| `--max-duration <TIME>` | Max recording (daemon safety limit) | 60s     |
+| Option                    | Description                         | Default |
+| ------------------------- | ----------------------------------- | ------- |
+| `-d, --duration <TIME>`   | Recording duration (10s, 1m, 2m30s) | 10s     |
+| `-D, --domain <DOMAIN>`   | Domain preset                       | general |
+| `-c, --clipboard`         | Copy to clipboard                   | off     |
+| `-k, --keystroke`         | Type into focused window            | off     |
+| `--keystroke-tool <TOOL>` | Keystroke tool (Linux only)         | enigo   |
+| `-n, --notify`            | Desktop notifications               | off     |
+| `--daemon`                | Run in daemon mode                  | off     |
+| `--max-duration <TIME>`   | Max recording (daemon safety limit) | 60s     |
 
 <details>
 <summary><strong>Platform Notes</strong></summary>
@@ -148,7 +149,28 @@ Optional dependencies for specific features:
 | ---------------- | --------------------------------------- |
 | Keystroke (`-k`) | ydotool, wtype (Wayland), xdotool (X11) |
 
-Install on common distros:
+**Keystroke tool selection:**
+
+By default, SmartScribe uses `enigo` (cross-platform library). On Linux, you can choose a specific tool:
+
+| Tool      | Description                                    |
+| --------- | ---------------------------------------------- |
+| `enigo`   | Cross-platform library (default)               |
+| `auto`    | Auto-detect: ydotool > wtype > xdotool > enigo |
+| `ydotool` | Works on both Wayland and X11 (needs daemon)   |
+| `wtype`   | Wayland-native                                 |
+| `xdotool` | X11-only                                       |
+
+```bash
+# Via CLI flag
+smart-scribe -k --keystroke-tool auto
+smart-scribe -k --keystroke-tool xdotool
+
+# Via config (persistent)
+smart-scribe config set linux.keystroke_tool auto
+```
+
+**Install keystroke tools:**
 
 ```bash
 # Arch Linux
