@@ -20,6 +20,9 @@ pub enum KeystrokeError {
     #[error("xdotool not found. Please install xdotool for X11 keystroke support.")]
     XdotoolNotFound,
 
+    #[error("{0} not found. Please install the tool.")]
+    ToolNotFound(String),
+
     #[error("Failed to type text: {0}")]
     TypeFailed(String),
 }

@@ -14,8 +14,8 @@ pub mod transcription;
 pub use clipboard::{create_clipboard, ArboardClipboard, WaylandClipboard};
 pub use config::XdgConfigStore;
 pub use keystroke::{
-    create_keystroke, detect_keystroke_tool, EnigoKeystroke, KeystrokeTool, NoOpKeystroke,
-    YdotoolKeystroke,
+    create_keystroke, detect_keystroke_tool, EnigoKeystroke, KeystrokeTool,
+    KeystrokeToolPreference, NoOpKeystroke, ParseKeystrokeToolError, YdotoolKeystroke,
 };
 pub use notification::{create_notifier, NotifyRustNotifier, NotifySendNotifier};
 pub use recording::{create_recorder, CpalRecorder, FfmpegRecorder};

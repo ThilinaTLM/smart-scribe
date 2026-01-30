@@ -11,7 +11,10 @@ mod xdotool;
 mod ydotool;
 
 pub use enigo::EnigoKeystroke;
-pub use factory::{create_keystroke, detect_keystroke_tool, KeystrokeTool};
+pub use factory::{
+    create_keystroke, detect_keystroke_tool, KeystrokeTool, KeystrokeToolPreference,
+    ParseKeystrokeToolError,
+};
 pub use noop::NoOpKeystroke;
 pub use wtype::WtypeKeystroke;
 pub use xdotool::XdotoolKeystroke;

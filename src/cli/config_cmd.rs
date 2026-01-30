@@ -1,10 +1,11 @@
 //! Config command handler
 
 use crate::application::ports::ConfigStore;
+use crate::domain::config::LinuxConfig;
 use crate::domain::error::ConfigError;
 use crate::domain::transcription::DomainId;
 
-use super::args::{is_valid_config_key, ConfigAction, VALID_CONFIG_KEYS};
+use super::args::{is_valid_config_key, ConfigAction, VALID_CONFIG_KEYS, VALID_KEYSTROKE_TOOLS};
 use super::presenter::Presenter;
 
 /// Handle config subcommand
@@ -77,6 +78,15 @@ async fn handle_set<S: ConfigStore>(
                 message: "Value must be 'true' or 'false'".to_string(),
             })?)
         }
+        "linux.keystroke_tool" => {
+            // Initialize linux config if None
+            if config.linux.is_none() {
+                config.linux = Some(LinuxConfig::default());
+            }
+            if let Some(ref mut linux) = config.linux {
+                linux.keystroke_tool = Some(value.to_string());
+            }
+        }
         _ => unreachable!(), // Already validated
     }
 
@@ -110,6 +120,7 @@ async fn handle_get<S: ConfigStore>(
         "clipboard" => config.clipboard.map(|b| b.to_string()),
         "keystroke" => config.keystroke.map(|b| b.to_string()),
         "notify" => config.notify.map(|b| b.to_string()),
+        "linux.keystroke_tool" => config.linux.and_then(|l| l.keystroke_tool),
         _ => unreachable!(),
     };
 
@@ -161,6 +172,14 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
             .map(|b| b.to_string())
             .unwrap_or_else(|| "(not set)".to_string()),
     );
+    presenter.key_value(
+        "linux.keystroke_tool",
+        config
+            .linux
+            .and_then(|l| l.keystroke_tool)
+            .as_deref()
+            .unwrap_or("(not set)"),
+    );
 
     Ok(())
 }
@@ -194,6 +213,19 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                 key: key.to_string(),
                 message: "Value must be 'true' or 'false'".to_string(),
             })?;
+        }
+        "linux.keystroke_tool" => {
+            let lower = value.to_lowercase();
+            if !VALID_KEYSTROKE_TOOLS.contains(&lower.as_str()) {
+                return Err(ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: format!(
+                        "Invalid value '{}'. Valid options: {}",
+                        value,
+                        VALID_KEYSTROKE_TOOLS.join(", ")
+                    ),
+                });
+            }
         }
         _ => {} // api_key accepts any string
     }
@@ -266,5 +298,30 @@ mod tests {
     #[test]
     fn validate_domain_invalid() {
         assert!(validate_config_value("domain", "invalid").is_err());
+    }
+
+    #[test]
+    fn validate_keystroke_tool_valid() {
+        assert!(validate_config_value("linux.keystroke_tool", "enigo").is_ok());
+        #[cfg(target_os = "linux")]
+        {
+            assert!(validate_config_value("linux.keystroke_tool", "auto").is_ok());
+            assert!(validate_config_value("linux.keystroke_tool", "ydotool").is_ok());
+            assert!(validate_config_value("linux.keystroke_tool", "xdotool").is_ok());
+            assert!(validate_config_value("linux.keystroke_tool", "wtype").is_ok());
+        }
+    }
+
+    #[test]
+    fn validate_keystroke_tool_invalid() {
+        assert!(validate_config_value("linux.keystroke_tool", "invalid").is_err());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn validate_keystroke_tool_linux_only_invalid_on_other() {
+        // On non-Linux platforms, Linux-specific tools should be invalid
+        assert!(validate_config_value("linux.keystroke_tool", "auto").is_err());
+        assert!(validate_config_value("linux.keystroke_tool", "xdotool").is_err());
     }
 }

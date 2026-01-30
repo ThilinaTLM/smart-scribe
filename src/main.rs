@@ -13,7 +13,7 @@ use smart_scribe::cli::{
     presenter::Presenter,
     DaemonOptions, TranscribeOptions,
 };
-use smart_scribe::domain::config::AppConfig;
+use smart_scribe::domain::config::{AppConfig, LinuxConfig};
 use smart_scribe::domain::recording::Duration;
 use smart_scribe::infrastructure::XdgConfigStore;
 
@@ -53,6 +53,9 @@ async fn main() -> ExitCode {
         clipboard: if cli.clipboard { Some(true) } else { None },
         keystroke: if cli.keystroke { Some(true) } else { None },
         notify: if cli.notify { Some(true) } else { None },
+        linux: cli.keystroke_tool.clone().map(|tool| LinuxConfig {
+            keystroke_tool: Some(tool),
+        }),
     };
 
     // Merge config
@@ -77,6 +80,7 @@ async fn main() -> ExitCode {
             domain: config.domain_or_default(),
             clipboard: config.clipboard_or_default(),
             keystroke: config.keystroke_or_default(),
+            keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
             notify: config.notify_or_default(),
         };
 
@@ -99,6 +103,7 @@ async fn main() -> ExitCode {
             domain: config.domain_or_default(),
             clipboard: config.clipboard_or_default(),
             keystroke: config.keystroke_or_default(),
+            keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
             notify: config.notify_or_default(),
         };
 

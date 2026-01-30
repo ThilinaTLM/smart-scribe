@@ -10,7 +10,7 @@ use crate::application::{DaemonConfig, DaemonTranscriptionUseCase};
 use crate::domain::daemon::DaemonState;
 use crate::infrastructure::{
     create_clipboard, create_keystroke, create_notifier, create_recorder, GeminiTranscriber,
-    NoOpKeystroke,
+    KeystrokeToolPreference, NoOpKeystroke,
 };
 
 use super::app::{get_api_key, EXIT_ERROR, EXIT_SUCCESS};
@@ -53,19 +53,27 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
     let clipboard = create_clipboard();
     let notifier = create_notifier();
 
+    // Parse keystroke tool preference
+    let preference = options
+        .keystroke_tool
+        .as_ref()
+        .and_then(|s| s.parse::<KeystrokeToolPreference>().ok())
+        .unwrap_or_default();
+
     // Detect keystroke tool
-    let keystroke: Box<dyn crate::application::ports::Keystroke> = match create_keystroke().await {
-        Ok((ks, tool)) => {
-            eprintln!("Keystroke: using {}", tool);
-            ks
-        }
-        Err(e) => {
-            if options.keystroke {
-                presenter.warn(&format!("Keystroke disabled: {}", e));
+    let keystroke: Box<dyn crate::application::ports::Keystroke> =
+        match create_keystroke(preference).await {
+            Ok((ks, tool)) => {
+                eprintln!("Keystroke: using {}", tool);
+                ks
             }
-            Box::new(NoOpKeystroke::new())
-        }
-    };
+            Err(e) => {
+                if options.keystroke {
+                    presenter.warn(&format!("Keystroke disabled: {}", e));
+                }
+                Box::new(NoOpKeystroke::new())
+            }
+        };
 
     // Create daemon config
     let config = DaemonConfig {

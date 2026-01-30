@@ -28,6 +28,10 @@ pub struct Cli {
     #[arg(short = 'k', long)]
     pub keystroke: bool,
 
+    /// Keystroke tool to use (Linux: enigo, auto, ydotool, xdotool, wtype)
+    #[arg(long, value_name = "TOOL")]
+    pub keystroke_tool: Option<String>,
+
     /// Show desktop notifications
     #[arg(short = 'n', long)]
     pub notify: bool,
@@ -135,6 +139,7 @@ pub struct TranscribeOptions {
     pub domain: DomainId,
     pub clipboard: bool,
     pub keystroke: bool,
+    pub keystroke_tool: Option<String>,
     pub notify: bool,
 }
 
@@ -145,6 +150,7 @@ pub struct DaemonOptions {
     pub domain: DomainId,
     pub clipboard: bool,
     pub keystroke: bool,
+    pub keystroke_tool: Option<String>,
     pub notify: bool,
 }
 
@@ -157,7 +163,18 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "clipboard",
     "keystroke",
     "notify",
+    "linux.keystroke_tool",
 ];
+
+/// Valid keystroke tool values for all platforms
+pub const KEYSTROKE_TOOL_ENIGO: &str = "enigo";
+
+/// Valid keystroke tool values (platform-aware)
+#[cfg(target_os = "linux")]
+pub const VALID_KEYSTROKE_TOOLS: &[&str] = &["enigo", "auto", "ydotool", "xdotool", "wtype"];
+
+#[cfg(not(target_os = "linux"))]
+pub const VALID_KEYSTROKE_TOOLS: &[&str] = &["enigo"];
 
 /// Check if a config key is valid
 pub fn is_valid_config_key(key: &str) -> bool {
@@ -176,6 +193,7 @@ mod tests {
         assert!(cli.domain.is_none());
         assert!(!cli.clipboard);
         assert!(!cli.keystroke);
+        assert!(cli.keystroke_tool.is_none());
         assert!(!cli.notify);
         assert!(!cli.daemon);
     }
@@ -248,7 +266,15 @@ mod tests {
     fn valid_config_keys() {
         assert!(is_valid_config_key("api_key"));
         assert!(is_valid_config_key("duration"));
+        assert!(is_valid_config_key("linux.keystroke_tool"));
         assert!(!is_valid_config_key("invalid_key"));
+    }
+
+    #[test]
+    fn cli_parses_keystroke_tool() {
+        let cli = Cli::parse_from(["smart-scribe", "-k", "--keystroke-tool", "xdotool"]);
+        assert!(cli.keystroke);
+        assert_eq!(cli.keystroke_tool, Some("xdotool".to_string()));
     }
 
     #[test]
