@@ -331,7 +331,10 @@ mod tests {
     fn valid_config_keys() {
         assert!(is_valid_config_key("api_key"));
         assert!(is_valid_config_key("duration"));
+        #[cfg(target_os = "linux")]
         assert!(is_valid_config_key("linux.keystroke_tool"));
+        #[cfg(not(target_os = "linux"))]
+        assert!(!is_valid_config_key("linux.keystroke_tool"));
         assert!(!is_valid_config_key("invalid_key"));
     }
 
