@@ -13,9 +13,7 @@ pub async fn handle_daemon_command(
 
     // Check if daemon is running
     if !client.is_daemon_running() {
-        return Err(
-            "No daemon running. Start with: smart-scribe --daemon".to_string()
-        );
+        return Err("No daemon running. Start with: smart-scribe --daemon".to_string());
     }
 
     let cmd = match action {
