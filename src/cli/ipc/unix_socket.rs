@@ -4,15 +4,16 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
-use super::{IpcClient, IpcServer, StateFn};
+use super::{ElapsedFn, IpcClient, IpcServer, StateFn};
 use crate::cli::signals::DaemonSignal;
-use crate::domain::daemon::DaemonState;
+use crate::domain::daemon::{DaemonState, StateUpdate};
 
 /// Socket path resolver
 #[derive(Debug, Clone)]
@@ -92,20 +93,37 @@ impl IpcServer for UnixSocketServer {
         self.socket_path.path().to_string_lossy().to_string()
     }
 
-    async fn run(&self, tx: mpsc::Sender<DaemonSignal>, state_fn: StateFn) -> io::Result<()> {
+    async fn run(
+        &self,
+        tx: mpsc::Sender<DaemonSignal>,
+        state_fn: StateFn,
+        elapsed_fn: ElapsedFn,
+        state_rx: broadcast::Receiver<StateUpdate>,
+    ) -> io::Result<()> {
         let listener = self
             .listener
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Socket not bound"))?;
 
+        // Wrap functions in Arc for sharing across connections
+        let state_fn = Arc::new(state_fn);
+        let elapsed_fn = Arc::new(elapsed_fn);
+
         loop {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
                     let tx = tx.clone();
-                    let state = state_fn();
+                    let state_fn = Arc::clone(&state_fn);
+                    let elapsed_fn = Arc::clone(&elapsed_fn);
+                    let state_rx = state_rx.resubscribe();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, tx, state).await {
-                            eprintln!("Socket connection error: {}", e);
+                        if let Err(e) =
+                            handle_connection(stream, tx, state_fn, elapsed_fn, state_rx).await
+                        {
+                            // Don't log BrokenPipe errors - they're expected when clients disconnect
+                            if e.kind() != io::ErrorKind::BrokenPipe {
+                                eprintln!("Socket connection error: {}", e);
+                            }
                         }
                     });
                 }
@@ -125,7 +143,9 @@ impl IpcServer for UnixSocketServer {
 async fn handle_connection(
     stream: UnixStream,
     tx: mpsc::Sender<DaemonSignal>,
-    current_state: DaemonState,
+    state_fn: Arc<StateFn>,
+    elapsed_fn: Arc<ElapsedFn>,
+    mut state_rx: broadcast::Receiver<StateUpdate>,
 ) -> io::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -136,25 +156,70 @@ async fn handle_connection(
     let cmd = line.trim();
 
     // Process command
-    let response = match cmd {
+    match cmd {
         "toggle" => {
             let _ = tx.send(DaemonSignal::Toggle).await;
-            "ok\n"
+            writer.write_all(b"ok\n").await?;
+            writer.flush().await?;
         }
         "cancel" => {
             let _ = tx.send(DaemonSignal::Cancel).await;
-            "ok\n"
+            writer.write_all(b"ok\n").await?;
+            writer.flush().await?;
         }
-        "status" => match current_state {
-            DaemonState::Idle => "idle\n",
-            DaemonState::Recording => "recording\n",
-            DaemonState::Processing => "processing\n",
-        },
-        _ => "error: unknown command\n",
-    };
+        "status" => {
+            let current_state = state_fn();
+            let response = match current_state {
+                DaemonState::Idle => "idle\n",
+                DaemonState::Recording => "recording\n",
+                DaemonState::Processing => "processing\n",
+            };
+            writer.write_all(response.as_bytes()).await?;
+            writer.flush().await?;
+        }
+        "subscribe" => {
+            // Send initial state
+            let initial = StateUpdate::new(state_fn(), elapsed_fn());
+            writer.write_all(initial.to_json_line().as_bytes()).await?;
+            writer.flush().await?;
 
-    writer.write_all(response.as_bytes()).await?;
-    writer.flush().await?;
+            // Stream state updates until client disconnects
+            loop {
+                match state_rx.recv().await {
+                    Ok(update) => {
+                        if let Err(e) = writer.write_all(update.to_json_line().as_bytes()).await {
+                            // Client disconnected
+                            if e.kind() == io::ErrorKind::BrokenPipe {
+                                break;
+                            }
+                            return Err(e);
+                        }
+                        if let Err(e) = writer.flush().await {
+                            if e.kind() == io::ErrorKind::BrokenPipe {
+                                break;
+                            }
+                            return Err(e);
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Subscriber lagged behind, send current state to catch up
+                        let current = StateUpdate::new(state_fn(), elapsed_fn());
+                        if let Err(e) = writer.write_all(current.to_json_line().as_bytes()).await {
+                            if e.kind() == io::ErrorKind::BrokenPipe {
+                                break;
+                            }
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            writer.write_all(b"error: unknown command\n").await?;
+            writer.flush().await?;
+        }
+    }
 
     Ok(())
 }

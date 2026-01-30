@@ -4,6 +4,8 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
+#[cfg(target_os = "linux")]
+use smart_scribe::cli::IndicatorPosition;
 use smart_scribe::cli::{
     app::{load_merged_config, run_oneshot, EXIT_ERROR, EXIT_USAGE_ERROR},
     args::{Cli, Commands},
@@ -43,6 +45,42 @@ async fn main() -> ExitCode {
     }
 
     // Build CLI config from args
+    #[cfg(target_os = "linux")]
+    let cli_config = {
+        let indicator_position_str = cli.indicator_position.map(|p| {
+            match p {
+                IndicatorPosition::TopRight => "top-right",
+                IndicatorPosition::TopLeft => "top-left",
+                IndicatorPosition::TopCenter => "top-center",
+                IndicatorPosition::BottomCenter => "bottom-center",
+                IndicatorPosition::BottomRight => "bottom-right",
+                IndicatorPosition::BottomLeft => "bottom-left",
+            }
+            .to_string()
+        });
+
+        // Build LinuxConfig with indicator settings
+        let linux = Some(LinuxConfig {
+            keystroke_tool: cli.keystroke_tool.clone(),
+            indicator: if cli.indicator { Some(true) } else { None },
+            indicator_position: indicator_position_str,
+        });
+
+        AppConfig {
+            api_key: None, // API key comes from env/file only
+            duration: cli.duration.clone(),
+            max_duration: cli.max_duration.clone(),
+            domain: cli
+                .domain
+                .map(|d| smart_scribe::domain::transcription::DomainId::from(d).to_string()),
+            clipboard: if cli.clipboard { Some(true) } else { None },
+            keystroke: if cli.keystroke { Some(true) } else { None },
+            notify: if cli.notify { Some(true) } else { None },
+            linux,
+        }
+    };
+
+    #[cfg(not(target_os = "linux"))]
     let cli_config = AppConfig {
         api_key: None, // API key comes from env/file only
         duration: cli.duration.clone(),
@@ -53,9 +91,7 @@ async fn main() -> ExitCode {
         clipboard: if cli.clipboard { Some(true) } else { None },
         keystroke: if cli.keystroke { Some(true) } else { None },
         notify: if cli.notify { Some(true) } else { None },
-        linux: cli.keystroke_tool.clone().map(|tool| LinuxConfig {
-            keystroke_tool: Some(tool),
-        }),
+        linux: None,
     };
 
     // Merge config
@@ -75,6 +111,12 @@ async fn main() -> ExitCode {
             None => Duration::default_max_duration(),
         };
 
+        #[cfg(target_os = "linux")]
+        let indicator_position: IndicatorPosition = config
+            .indicator_position_or_default()
+            .parse()
+            .unwrap_or_default();
+
         let options = DaemonOptions {
             max_duration,
             domain: config.domain_or_default(),
@@ -82,6 +124,10 @@ async fn main() -> ExitCode {
             keystroke: config.keystroke_or_default(),
             keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
             notify: config.notify_or_default(),
+            #[cfg(target_os = "linux")]
+            indicator: config.indicator_or_default(),
+            #[cfg(target_os = "linux")]
+            indicator_position,
         };
 
         run_daemon(options).await

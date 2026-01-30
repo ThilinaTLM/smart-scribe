@@ -4,10 +4,11 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
+use tokio::sync::broadcast;
 use tokio::time::timeout;
 
 use crate::application::{DaemonConfig, DaemonTranscriptionUseCase};
-use crate::domain::daemon::DaemonState;
+use crate::domain::daemon::{DaemonState, StateUpdate};
 use crate::infrastructure::{
     create_clipboard, create_keystroke, create_notifier, create_recorder, GeminiTranscriber,
     KeystrokeToolPreference, NoOpKeystroke,
@@ -19,6 +20,9 @@ use super::ipc::create_ipc_server;
 use super::pid_file::{PidFile, PidFileError};
 use super::presenter::Presenter;
 use super::signals::{DaemonSignal, DaemonSignalHandler};
+
+/// Buffer size for state update broadcast channel
+const STATE_BROADCAST_CAPACITY: usize = 16;
 
 /// Run daemon mode
 pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
@@ -112,9 +116,30 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
         return ExitCode::from(EXIT_ERROR);
     }
 
-    // Wrap state in Arc<Mutex> for sharing with IPC server
+    // Wrap state and elapsed time in Arc<Mutex> for sharing with IPC server
     let state = Arc::new(Mutex::new(DaemonState::Idle));
+    let elapsed = Arc::new(Mutex::new(0u64));
     let state_for_ipc = Arc::clone(&state);
+    let elapsed_for_ipc = Arc::clone(&elapsed);
+
+    // Create broadcast channel for state updates
+    let (state_tx, state_rx) = broadcast::channel::<StateUpdate>(STATE_BROADCAST_CAPACITY);
+
+    // Spawn indicator thread if enabled (Linux only, requires Wayland)
+    #[cfg(target_os = "linux")]
+    if options.indicator {
+        let indicator_rx = state_tx.subscribe();
+        let position = options.indicator_position;
+        std::thread::spawn(move || {
+            if let Err(e) = crate::gui::run_indicator(position, indicator_rx) {
+                eprintln!(
+                    "Indicator error: {} (requires Wayland with wlr-layer-shell)",
+                    e
+                );
+            }
+        });
+        presenter.info("Indicator overlay enabled");
+    }
 
     // Spawn IPC server task
     tokio::spawn(async move {
@@ -125,6 +150,8 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
                     // Use std::sync::Mutex - safe because lock is very brief
                     *state_for_ipc.lock().unwrap_or_else(|e| e.into_inner())
                 }),
+                Box::new(move || *elapsed_for_ipc.lock().unwrap_or_else(|e| e.into_inner())),
+                state_rx,
             )
             .await;
     });
@@ -138,7 +165,16 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
 
     // Main signal loop
     let max_duration_ms = options.max_duration.as_millis();
-    let result = daemon_loop(&use_case, &mut signals, &presenter, max_duration_ms, &state).await;
+    let result = daemon_loop(
+        &use_case,
+        &mut signals,
+        &presenter,
+        max_duration_ms,
+        &state,
+        &elapsed,
+        &state_tx,
+    )
+    .await;
 
     // Cleanup (IPC server Drop will clean up resources)
     let _ = pid_file.release();
@@ -156,6 +192,8 @@ async fn daemon_loop<R, T, C, K, N>(
     presenter: &Presenter,
     max_duration_ms: u64,
     shared_state: &Arc<Mutex<DaemonState>>,
+    shared_elapsed: &Arc<Mutex<u64>>,
+    state_tx: &broadcast::Sender<StateUpdate>,
 ) -> bool
 where
     R: crate::application::ports::UnboundedRecorder,
@@ -164,22 +202,36 @@ where
     K: crate::application::ports::Keystroke,
     N: crate::application::ports::Notifier,
 {
-    loop {
-        let state = use_case.state().await;
-        // Update shared state for socket server
+    // Helper to broadcast state updates
+    let broadcast_state = |state: DaemonState, elapsed_ms: u64| {
+        // Update shared state for status queries
         if let Ok(mut guard) = shared_state.lock() {
             *guard = state;
         }
+        if let Ok(mut guard) = shared_elapsed.lock() {
+            *guard = elapsed_ms;
+        }
+        // Broadcast to subscribers (ignore if no receivers)
+        let _ = state_tx.send(StateUpdate::new(state, elapsed_ms));
+    };
 
-        // If recording, use timeout for max duration check
+    loop {
+        let state = use_case.state().await;
+        let elapsed_ms = use_case.elapsed_ms();
+
+        // Update shared state and broadcast
+        broadcast_state(state, elapsed_ms);
+
+        // If recording, use timeout for max duration check and periodic broadcasts
         let signal = if state == DaemonState::Recording {
-            let remaining_ms = max_duration_ms.saturating_sub(use_case.elapsed_ms());
+            let remaining_ms = max_duration_ms.saturating_sub(elapsed_ms);
             if remaining_ms == 0 {
                 // Max duration reached
                 Some(DaemonSignal::Toggle)
             } else {
+                // Use 500ms timeout for periodic state broadcasts during recording
                 match timeout(
-                    StdDuration::from_millis(remaining_ms.min(100)),
+                    StdDuration::from_millis(remaining_ms.min(500)),
                     signals.recv(),
                 )
                 .await
@@ -191,6 +243,7 @@ where
                             presenter.warn("Max duration reached, auto-stopping");
                             Some(DaemonSignal::Toggle)
                         } else {
+                            // Periodic broadcast during recording - continue loop
                             continue;
                         }
                     }
@@ -212,29 +265,35 @@ where
                             continue;
                         }
                         presenter.daemon_status("Recording...");
+                        broadcast_state(DaemonState::Recording, 0);
                     }
                     DaemonState::Recording => {
                         // Stop recording first to get audio size
+                        let final_elapsed = use_case.elapsed_ms();
                         match use_case.stop_recording().await {
                             Ok(audio) => {
                                 let audio_size = audio.human_readable_size();
                                 presenter.daemon_status(&format!("Processing ({})...", audio_size));
+                                broadcast_state(DaemonState::Processing, final_elapsed);
 
                                 // Now transcribe
                                 match use_case.transcribe_audio(audio).await {
                                     Ok(output) => {
                                         presenter.output(&output.text);
                                         presenter.daemon_status("Idle");
+                                        broadcast_state(DaemonState::Idle, 0);
                                     }
                                     Err(e) => {
                                         presenter.error(&format!("Transcription failed: {}", e));
                                         presenter.daemon_status("Idle (error)");
+                                        broadcast_state(DaemonState::Idle, 0);
                                     }
                                 }
                             }
                             Err(e) => {
                                 presenter.error(&format!("Failed to stop recording: {}", e));
                                 presenter.daemon_status("Idle (error)");
+                                broadcast_state(DaemonState::Idle, 0);
                             }
                         }
                     }
@@ -252,6 +311,7 @@ where
                         presenter.error(&format!("Failed to cancel: {}", e));
                     } else {
                         presenter.daemon_status("Recording cancelled");
+                        broadcast_state(DaemonState::Idle, 0);
                     }
                 } else {
                     presenter.warn("Not recording, nothing to cancel");
@@ -265,6 +325,7 @@ where
                     let _ = use_case.cancel().await;
                 }
                 presenter.daemon_status("Shutting down...");
+                broadcast_state(DaemonState::Idle, 0);
                 return true;
             }
             None => {

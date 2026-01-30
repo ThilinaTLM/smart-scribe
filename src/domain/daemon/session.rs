@@ -3,13 +3,35 @@
 use std::fmt;
 use thiserror::Error;
 
+use serde::{Deserialize, Serialize};
+
 /// Daemon states
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DaemonState {
     #[default]
     Idle,
     Recording,
     Processing,
+}
+
+/// State update message sent to subscribers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateUpdate {
+    pub state: DaemonState,
+    pub elapsed_ms: u64,
+}
+
+impl StateUpdate {
+    /// Create a new state update
+    pub fn new(state: DaemonState, elapsed_ms: u64) -> Self {
+        Self { state, elapsed_ms }
+    }
+
+    /// Serialize to JSON line (with newline)
+    pub fn to_json_line(&self) -> String {
+        format!("{}\n", serde_json::to_string(self).unwrap_or_default())
+    }
 }
 
 impl DaemonState {
@@ -254,5 +276,38 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("start recording"));
         assert!(msg.contains("processing"));
+    }
+
+    #[test]
+    fn state_update_new() {
+        let update = StateUpdate::new(DaemonState::Recording, 5000);
+        assert_eq!(update.state, DaemonState::Recording);
+        assert_eq!(update.elapsed_ms, 5000);
+    }
+
+    #[test]
+    fn state_update_json_serialization() {
+        let update = StateUpdate::new(DaemonState::Recording, 1500);
+        let json = update.to_json_line();
+        assert!(json.contains("\"state\":\"recording\""));
+        assert!(json.contains("\"elapsed_ms\":1500"));
+        assert!(json.ends_with('\n'));
+    }
+
+    #[test]
+    fn state_update_json_deserialization() {
+        let json = r#"{"state":"processing","elapsed_ms":3000}"#;
+        let update: StateUpdate = serde_json::from_str(json).unwrap();
+        assert_eq!(update.state, DaemonState::Processing);
+        assert_eq!(update.elapsed_ms, 3000);
+    }
+
+    #[test]
+    fn state_update_roundtrip() {
+        let original = StateUpdate::new(DaemonState::Idle, 0);
+        let json = original.to_json_line();
+        let parsed: StateUpdate = serde_json::from_str(json.trim()).unwrap();
+        assert_eq!(parsed.state, original.state);
+        assert_eq!(parsed.elapsed_ms, original.elapsed_ms);
     }
 }

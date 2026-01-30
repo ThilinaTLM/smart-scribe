@@ -87,6 +87,26 @@ async fn handle_set<S: ConfigStore>(
                 linux.keystroke_tool = Some(value.to_string());
             }
         }
+        "linux.indicator" => {
+            if config.linux.is_none() {
+                config.linux = Some(LinuxConfig::default());
+            }
+            if let Some(ref mut linux) = config.linux {
+                linux.indicator =
+                    Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                        key: key.to_string(),
+                        message: "Value must be 'true' or 'false'".to_string(),
+                    })?);
+            }
+        }
+        "linux.indicator_position" => {
+            if config.linux.is_none() {
+                config.linux = Some(LinuxConfig::default());
+            }
+            if let Some(ref mut linux) = config.linux {
+                linux.indicator_position = Some(value.to_string());
+            }
+        }
         _ => unreachable!(), // Already validated
     }
 
@@ -120,7 +140,16 @@ async fn handle_get<S: ConfigStore>(
         "clipboard" => config.clipboard.map(|b| b.to_string()),
         "keystroke" => config.keystroke.map(|b| b.to_string()),
         "notify" => config.notify.map(|b| b.to_string()),
-        "linux.keystroke_tool" => config.linux.and_then(|l| l.keystroke_tool),
+        "linux.keystroke_tool" => config.linux.as_ref().and_then(|l| l.keystroke_tool.clone()),
+        "linux.indicator" => config
+            .linux
+            .as_ref()
+            .and_then(|l| l.indicator)
+            .map(|b| b.to_string()),
+        "linux.indicator_position" => config
+            .linux
+            .as_ref()
+            .and_then(|l| l.indicator_position.clone()),
         _ => unreachable!(),
     };
 
@@ -176,8 +205,25 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
         "linux.keystroke_tool",
         config
             .linux
-            .and_then(|l| l.keystroke_tool)
-            .as_deref()
+            .as_ref()
+            .and_then(|l| l.keystroke_tool.as_deref())
+            .unwrap_or("(not set)"),
+    );
+    presenter.key_value(
+        "linux.indicator",
+        &config
+            .linux
+            .as_ref()
+            .and_then(|l| l.indicator)
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "(not set)".to_string()),
+    );
+    presenter.key_value(
+        "linux.indicator_position",
+        config
+            .linux
+            .as_ref()
+            .and_then(|l| l.indicator_position.as_deref())
             .unwrap_or("(not set)"),
     );
 
@@ -224,6 +270,28 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                         value,
                         VALID_KEYSTROKE_TOOLS.join(", ")
                     ),
+                });
+            }
+        }
+        "linux.indicator" => {
+            parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                key: key.to_string(),
+                message: "Value must be 'true' or 'false'".to_string(),
+            })?;
+        }
+        "linux.indicator_position" => {
+            let valid = [
+                "top-right",
+                "top-left",
+                "top-center",
+                "bottom-center",
+                "bottom-right",
+                "bottom-left",
+            ];
+            if !valid.contains(&value) {
+                return Err(ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: format!("Invalid value '{}'. Valid: {}", value, valid.join(", ")),
                 });
             }
         }

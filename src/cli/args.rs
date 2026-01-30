@@ -44,6 +44,16 @@ pub struct Cli {
     #[arg(long, value_name = "TIME", requires = "daemon")]
     pub max_duration: Option<String>,
 
+    /// Show recording indicator overlay (daemon mode only, Linux/Wayland)
+    #[cfg(target_os = "linux")]
+    #[arg(long, requires = "daemon")]
+    pub indicator: bool,
+
+    /// Indicator position on screen (daemon mode only, Linux/Wayland)
+    #[cfg(target_os = "linux")]
+    #[arg(long, value_name = "POSITION", requires = "indicator")]
+    pub indicator_position: Option<IndicatorPosition>,
+
     /// Config subcommand
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -108,6 +118,42 @@ pub enum DomainArg {
     Finance,
 }
 
+/// Indicator position on screen (Linux only)
+#[cfg(target_os = "linux")]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum IndicatorPosition {
+    #[value(name = "top-right")]
+    TopRight,
+    #[value(name = "top-left")]
+    TopLeft,
+    #[value(name = "top-center")]
+    TopCenter,
+    #[default]
+    #[value(name = "bottom-center")]
+    BottomCenter,
+    #[value(name = "bottom-right")]
+    BottomRight,
+    #[value(name = "bottom-left")]
+    BottomLeft,
+}
+
+#[cfg(target_os = "linux")]
+impl std::str::FromStr for IndicatorPosition {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "top-right" => Ok(IndicatorPosition::TopRight),
+            "top-left" => Ok(IndicatorPosition::TopLeft),
+            "top-center" => Ok(IndicatorPosition::TopCenter),
+            "bottom-center" => Ok(IndicatorPosition::BottomCenter),
+            "bottom-right" => Ok(IndicatorPosition::BottomRight),
+            "bottom-left" => Ok(IndicatorPosition::BottomLeft),
+            _ => Err(format!("Invalid indicator position: {}", s)),
+        }
+    }
+}
+
 impl From<DomainArg> for DomainId {
     fn from(arg: DomainArg) -> Self {
         match arg {
@@ -152,9 +198,14 @@ pub struct DaemonOptions {
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
     pub notify: bool,
+    #[cfg(target_os = "linux")]
+    pub indicator: bool,
+    #[cfg(target_os = "linux")]
+    pub indicator_position: IndicatorPosition,
 }
 
-/// Valid config keys
+/// Valid config keys (Linux includes indicator settings)
+#[cfg(target_os = "linux")]
 pub const VALID_CONFIG_KEYS: &[&str] = &[
     "api_key",
     "duration",
@@ -164,6 +215,20 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "keystroke",
     "notify",
     "linux.keystroke_tool",
+    "linux.indicator",
+    "linux.indicator_position",
+];
+
+/// Valid config keys (non-Linux)
+#[cfg(not(target_os = "linux"))]
+pub const VALID_CONFIG_KEYS: &[&str] = &[
+    "api_key",
+    "duration",
+    "max_duration",
+    "domain",
+    "clipboard",
+    "keystroke",
+    "notify",
 ];
 
 /// Valid keystroke tool values for all platforms

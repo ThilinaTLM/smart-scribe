@@ -9,6 +9,8 @@ use crate::domain::transcription::DomainId;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LinuxConfig {
     pub keystroke_tool: Option<String>,
+    pub indicator: Option<bool>,
+    pub indicator_position: Option<String>,
 }
 
 /// Application configuration.
@@ -38,6 +40,8 @@ impl AppConfig {
             notify: Some(false),
             linux: Some(LinuxConfig {
                 keystroke_tool: Some("enigo".to_string()),
+                indicator: Some(false),
+                indicator_position: Some("top-right".to_string()),
             }),
         }
     }
@@ -73,6 +77,8 @@ impl AppConfig {
             (None, Some(o)) => Some(o),
             (Some(b), Some(o)) => Some(LinuxConfig {
                 keystroke_tool: o.keystroke_tool.or(b.keystroke_tool),
+                indicator: o.indicator.or(b.indicator),
+                indicator_position: o.indicator_position.or(b.indicator_position),
             }),
         }
     }
@@ -116,6 +122,24 @@ impl AppConfig {
         self.notify.unwrap_or(false)
     }
 
+    /// Get indicator setting, or false if not set (Linux only)
+    #[cfg(target_os = "linux")]
+    pub fn indicator_or_default(&self) -> bool {
+        self.linux
+            .as_ref()
+            .and_then(|l| l.indicator)
+            .unwrap_or(false)
+    }
+
+    /// Get indicator position setting, or "top-right" if not set (Linux only)
+    #[cfg(target_os = "linux")]
+    pub fn indicator_position_or_default(&self) -> &str {
+        self.linux
+            .as_ref()
+            .and_then(|l| l.indicator_position.as_deref())
+            .unwrap_or("top-right")
+    }
+
     /// Get keystroke tool preference, or "enigo" if not set
     pub fn keystroke_tool_or_default(&self) -> &str {
         self.linux
@@ -140,6 +164,10 @@ mod tests {
         assert_eq!(config.keystroke, Some(false));
         assert_eq!(config.notify, Some(false));
         assert_eq!(config.keystroke_tool_or_default(), "enigo");
+        // Linux-specific defaults
+        let linux = config.linux.as_ref().unwrap();
+        assert_eq!(linux.indicator, Some(false));
+        assert_eq!(linux.indicator_position, Some("top-right".to_string()));
     }
 
     #[test]
@@ -241,6 +269,33 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn indicator_or_default_returns_false() {
+        let config = AppConfig::empty();
+        assert!(!config.indicator_or_default());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn indicator_position_or_default_returns_top_right() {
+        let config = AppConfig::empty();
+        assert_eq!(config.indicator_position_or_default(), "top-right");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn indicator_position_or_default_returns_configured() {
+        let config = AppConfig {
+            linux: Some(LinuxConfig {
+                indicator_position: Some("bottom-left".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(config.indicator_position_or_default(), "bottom-left");
+    }
+
+    #[test]
     fn keystroke_tool_or_default_returns_enigo() {
         let config = AppConfig::empty();
         assert_eq!(config.keystroke_tool_or_default(), "enigo");
@@ -251,6 +306,7 @@ mod tests {
         let config = AppConfig {
             linux: Some(LinuxConfig {
                 keystroke_tool: Some("xdotool".to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -262,12 +318,14 @@ mod tests {
         let base = AppConfig {
             linux: Some(LinuxConfig {
                 keystroke_tool: Some("enigo".to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         };
         let other = AppConfig {
             linux: Some(LinuxConfig {
                 keystroke_tool: Some("xdotool".to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -280,11 +338,36 @@ mod tests {
         let base = AppConfig {
             linux: Some(LinuxConfig {
                 keystroke_tool: Some("ydotool".to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         };
         let other = AppConfig::empty();
         let merged = base.merge(other);
         assert_eq!(merged.keystroke_tool_or_default(), "ydotool");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn merge_linux_config_indicator_fields() {
+        let base = AppConfig {
+            linux: Some(LinuxConfig {
+                indicator: Some(false),
+                indicator_position: Some("top-right".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let other = AppConfig {
+            linux: Some(LinuxConfig {
+                indicator: Some(true),
+                indicator_position: Some("bottom-left".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let merged = base.merge(other);
+        assert!(merged.indicator_or_default());
+        assert_eq!(merged.indicator_position_or_default(), "bottom-left");
     }
 }

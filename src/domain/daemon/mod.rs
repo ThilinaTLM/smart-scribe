@@ -2,4 +2,4 @@
 
 mod session;
 
-pub use session::{DaemonSession, DaemonState, InvalidStateTransition};
+pub use session::{DaemonSession, DaemonState, InvalidStateTransition, StateUpdate};
