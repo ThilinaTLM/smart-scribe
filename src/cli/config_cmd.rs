@@ -92,10 +92,11 @@ async fn handle_set<S: ConfigStore>(
                 config.linux = Some(LinuxConfig::default());
             }
             if let Some(ref mut linux) = config.linux {
-                linux.indicator = Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
-                    key: key.to_string(),
-                    message: "Value must be 'true' or 'false'".to_string(),
-                })?);
+                linux.indicator =
+                    Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                        key: key.to_string(),
+                        message: "Value must be 'true' or 'false'".to_string(),
+                    })?);
             }
         }
         "linux.indicator_position" => {
@@ -140,8 +141,15 @@ async fn handle_get<S: ConfigStore>(
         "keystroke" => config.keystroke.map(|b| b.to_string()),
         "notify" => config.notify.map(|b| b.to_string()),
         "linux.keystroke_tool" => config.linux.as_ref().and_then(|l| l.keystroke_tool.clone()),
-        "linux.indicator" => config.linux.as_ref().and_then(|l| l.indicator).map(|b| b.to_string()),
-        "linux.indicator_position" => config.linux.as_ref().and_then(|l| l.indicator_position.clone()),
+        "linux.indicator" => config
+            .linux
+            .as_ref()
+            .and_then(|l| l.indicator)
+            .map(|b| b.to_string()),
+        "linux.indicator_position" => config
+            .linux
+            .as_ref()
+            .and_then(|l| l.indicator_position.clone()),
         _ => unreachable!(),
     };
 
@@ -272,7 +280,14 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
             })?;
         }
         "linux.indicator_position" => {
-            let valid = ["top-right", "top-left", "bottom-right", "bottom-left"];
+            let valid = [
+                "top-right",
+                "top-left",
+                "top-center",
+                "bottom-center",
+                "bottom-right",
+                "bottom-left",
+            ];
             if !valid.contains(&value) {
                 return Err(ConfigError::ValidationError {
                     key: key.to_string(),

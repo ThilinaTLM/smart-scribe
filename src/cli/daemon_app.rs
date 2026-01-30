@@ -132,7 +132,10 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
         let position = options.indicator_position;
         std::thread::spawn(move || {
             if let Err(e) = crate::gui::run_indicator(position, indicator_rx) {
-                eprintln!("Indicator error: {} (requires Wayland with wlr-layer-shell)", e);
+                eprintln!(
+                    "Indicator error: {} (requires Wayland with wlr-layer-shell)",
+                    e
+                );
             }
         });
         presenter.info("Indicator overlay enabled");

@@ -191,8 +191,8 @@ impl LayerShellIndicator {
     ) -> Result<Self, LayerShellError> {
         let registry_state = RegistryState::new(globals);
         let output_state = OutputState::new(globals, qh);
-        let compositor_state =
-            CompositorState::bind(globals, qh).map_err(|_| LayerShellError::LayerShellNotAvailable)?;
+        let compositor_state = CompositorState::bind(globals, qh)
+            .map_err(|_| LayerShellError::LayerShellNotAvailable)?;
         let shm = Shm::bind(globals, qh).map_err(|_| LayerShellError::LayerShellNotAvailable)?;
         let layer_shell =
             LayerShell::bind(globals, qh).map_err(|_| LayerShellError::LayerShellNotAvailable)?;
@@ -269,6 +269,8 @@ impl LayerShellIndicator {
         let anchor = match self.position {
             IndicatorPosition::TopRight => Anchor::TOP | Anchor::RIGHT,
             IndicatorPosition::TopLeft => Anchor::TOP | Anchor::LEFT,
+            IndicatorPosition::TopCenter => Anchor::TOP,
+            IndicatorPosition::BottomCenter => Anchor::BOTTOM,
             IndicatorPosition::BottomRight => Anchor::BOTTOM | Anchor::RIGHT,
             IndicatorPosition::BottomLeft => Anchor::BOTTOM | Anchor::LEFT,
         };
@@ -281,6 +283,12 @@ impl LayerShellIndicator {
             }
             IndicatorPosition::TopLeft => {
                 layer_surface.set_margin(MARGIN, 0, 0, MARGIN);
+            }
+            IndicatorPosition::TopCenter => {
+                layer_surface.set_margin(MARGIN, 0, 0, 0);
+            }
+            IndicatorPosition::BottomCenter => {
+                layer_surface.set_margin(0, 0, MARGIN, 0);
             }
             IndicatorPosition::BottomRight => {
                 layer_surface.set_margin(0, MARGIN, MARGIN, 0);
@@ -341,7 +349,7 @@ impl LayerShellIndicator {
             // tiny-skia uses RGBA, wayland expects ARGB (actually BGRA on little-endian)
             chunk[0] = src[si + 2]; // B
             chunk[1] = src[si + 1]; // G
-            chunk[2] = src[si];     // R
+            chunk[2] = src[si]; // R
             chunk[3] = src[si + 3]; // A
         }
 
@@ -349,9 +357,9 @@ impl LayerShellIndicator {
         let layer_surface = self.layer_surface.as_ref().unwrap();
 
         // Attach buffer to surface
-        buffer.attach_to(layer_surface.wl_surface()).map_err(|e| {
-            LayerShellError::BufferPool(format!("Failed to attach buffer: {}", e))
-        })?;
+        buffer
+            .attach_to(layer_surface.wl_surface())
+            .map_err(|e| LayerShellError::BufferPool(format!("Failed to attach buffer: {}", e)))?;
 
         // Damage the entire surface
         layer_surface
@@ -385,7 +393,12 @@ impl LayerShellIndicator {
             pb.line_to(WIDTH as f32 - radius, 0.0);
             pb.quad_to(WIDTH as f32, 0.0, WIDTH as f32, radius);
             pb.line_to(WIDTH as f32, HEIGHT as f32 - radius);
-            pb.quad_to(WIDTH as f32, HEIGHT as f32, WIDTH as f32 - radius, HEIGHT as f32);
+            pb.quad_to(
+                WIDTH as f32,
+                HEIGHT as f32,
+                WIDTH as f32 - radius,
+                HEIGHT as f32,
+            );
             pb.line_to(radius, HEIGHT as f32);
             pb.quad_to(0.0, HEIGHT as f32, 0.0, HEIGHT as f32 - radius);
             pb.line_to(0.0, radius);
@@ -474,13 +487,9 @@ impl LayerShellIndicator {
 
                     if px >= 0 && px < WIDTH as i32 && py >= 0 && py < HEIGHT as i32 {
                         let alpha = (coverage as f32 / 255.0) * color.alpha();
-                        let pixel_color = Color::from_rgba(
-                            color.red(),
-                            color.green(),
-                            color.blue(),
-                            alpha,
-                        )
-                        .unwrap_or(color);
+                        let pixel_color =
+                            Color::from_rgba(color.red(), color.green(), color.blue(), alpha)
+                                .unwrap_or(color);
 
                         // Blend with existing pixel
                         if let Some(existing) = pixmap.pixel(px as u32, py as u32) {
@@ -614,12 +623,7 @@ impl OutputHandler for LayerShellIndicator {
 }
 
 impl LayerShellHandler for LayerShellIndicator {
-    fn closed(
-        &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _layer: &LayerSurface,
-    ) {
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
         self.destroy_surface();
     }
 

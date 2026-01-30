@@ -47,12 +47,17 @@ async fn main() -> ExitCode {
     // Build CLI config from args
     #[cfg(target_os = "linux")]
     let cli_config = {
-        let indicator_position_str = cli.indicator_position.map(|p| match p {
-            IndicatorPosition::TopRight => "top-right",
-            IndicatorPosition::TopLeft => "top-left",
-            IndicatorPosition::BottomRight => "bottom-right",
-            IndicatorPosition::BottomLeft => "bottom-left",
-        }.to_string());
+        let indicator_position_str = cli.indicator_position.map(|p| {
+            match p {
+                IndicatorPosition::TopRight => "top-right",
+                IndicatorPosition::TopLeft => "top-left",
+                IndicatorPosition::TopCenter => "top-center",
+                IndicatorPosition::BottomCenter => "bottom-center",
+                IndicatorPosition::BottomRight => "bottom-right",
+                IndicatorPosition::BottomLeft => "bottom-left",
+            }
+            .to_string()
+        });
 
         // Build LinuxConfig with indicator settings
         let linux = Some(LinuxConfig {

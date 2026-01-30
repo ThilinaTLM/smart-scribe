@@ -122,11 +122,15 @@ pub enum DomainArg {
 #[cfg(target_os = "linux")]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum IndicatorPosition {
-    #[default]
     #[value(name = "top-right")]
     TopRight,
     #[value(name = "top-left")]
     TopLeft,
+    #[value(name = "top-center")]
+    TopCenter,
+    #[default]
+    #[value(name = "bottom-center")]
+    BottomCenter,
     #[value(name = "bottom-right")]
     BottomRight,
     #[value(name = "bottom-left")]
@@ -141,6 +145,8 @@ impl std::str::FromStr for IndicatorPosition {
         match s {
             "top-right" => Ok(IndicatorPosition::TopRight),
             "top-left" => Ok(IndicatorPosition::TopLeft),
+            "top-center" => Ok(IndicatorPosition::TopCenter),
+            "bottom-center" => Ok(IndicatorPosition::BottomCenter),
             "bottom-right" => Ok(IndicatorPosition::BottomRight),
             "bottom-left" => Ok(IndicatorPosition::BottomLeft),
             _ => Err(format!("Invalid indicator position: {}", s)),
