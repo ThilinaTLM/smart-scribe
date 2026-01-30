@@ -18,7 +18,14 @@ impl XdgConfigStore {
     /// Create a new XDG config store with default path
     pub fn new() -> Self {
         let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("~/.config"))
+            .or_else(|| {
+                // Fallback: use home_dir/.config on Unix-like systems
+                dirs::home_dir().map(|home| home.join(".config"))
+            })
+            .unwrap_or_else(|| {
+                // Last resort: use current directory
+                PathBuf::from(".")
+            })
             .join("smart-scribe");
 
         Self {

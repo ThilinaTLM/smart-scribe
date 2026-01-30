@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+#[cfg(unix)]
 use nix::sys::signal::{self, Signal};
+#[cfg(unix)]
 use nix::unistd::Pid;
 use tokio::fs;
 use tokio::process::{Child, Command};
@@ -32,7 +34,7 @@ impl TempAudioFile {
             .map(|d| d.as_millis())
             .unwrap_or(0);
 
-        let path = PathBuf::from(format!("/tmp/smartscribe-{}.ogg", timestamp));
+        let path = std::env::temp_dir().join(format!("smartscribe-{}.ogg", timestamp));
         Self { path }
     }
 
@@ -140,12 +142,21 @@ impl FfmpegRecorder {
         Ok(AudioData::new(data, AudioMimeType::Ogg))
     }
 
-    /// Send signal to FFmpeg process
+    /// Send signal to FFmpeg process (Unix)
+    #[cfg(unix)]
     fn send_signal(child: &Child, sig: Signal) -> Result<(), RecordingError> {
         if let Some(id) = child.id() {
             signal::kill(Pid::from_raw(id as i32), sig)
                 .map_err(|e| RecordingError::RecordingFailed(format!("Signal failed: {}", e)))?;
         }
+        Ok(())
+    }
+
+    /// Send signal to FFmpeg process (Windows - uses kill_on_drop)
+    #[cfg(windows)]
+    fn send_signal(_child: &Child, _terminate: bool) -> Result<(), RecordingError> {
+        // On Windows, we rely on kill_on_drop(true) set when spawning
+        // The child will be killed when dropped
         Ok(())
     }
 }
@@ -274,14 +285,25 @@ impl UnboundedRecorder for FfmpegRecorder {
 
     async fn stop(&self) -> Result<AudioData, RecordingError> {
         let mut process_guard = self.process.lock().await;
+        #[cfg(unix)]
         let child = process_guard.take().ok_or_else(|| {
+            RecordingError::RecordingFailed("No recording in progress".to_string())
+        })?;
+        #[cfg(windows)]
+        let mut child = process_guard.take().ok_or_else(|| {
             RecordingError::RecordingFailed("No recording in progress".to_string())
         })?;
 
         self.is_recording.store(false, Ordering::SeqCst);
 
         // Send SIGINT for graceful stop (FFmpeg will finalize the file)
+        #[cfg(unix)]
         Self::send_signal(&child, Signal::SIGINT)?;
+        #[cfg(windows)]
+        {
+            // On Windows, kill the process (FFmpeg should still finalize with kill_on_drop)
+            let _ = child.kill().await;
+        }
 
         // Wait for process to finish
         let _ = child.wait_with_output().await;
@@ -309,11 +331,22 @@ impl UnboundedRecorder for FfmpegRecorder {
 
     async fn cancel(&self) -> Result<(), RecordingError> {
         let mut process_guard = self.process.lock().await;
+        #[cfg(unix)]
         if let Some(child) = process_guard.take() {
             self.is_recording.store(false, Ordering::SeqCst);
 
             // Send SIGKILL for immediate termination
             Self::send_signal(&child, Signal::SIGKILL)?;
+
+            // Wait for process to finish
+            let _ = child.wait_with_output().await;
+        }
+        #[cfg(windows)]
+        if let Some(mut child) = process_guard.take() {
+            self.is_recording.store(false, Ordering::SeqCst);
+
+            // Kill the process on Windows
+            let _ = child.kill().await;
 
             // Wait for process to finish
             let _ = child.wait_with_output().await;

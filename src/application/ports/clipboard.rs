@@ -9,6 +9,9 @@ pub enum ClipboardError {
     #[error("wl-copy not found. Please install wl-clipboard.")]
     WlCopyNotFound,
 
+    #[error("Clipboard unavailable: {0}")]
+    ClipboardUnavailable(String),
+
     #[error("Failed to copy to clipboard: {0}")]
     CopyFailed(String),
 }
@@ -24,4 +27,12 @@ pub trait Clipboard: Send + Sync {
     /// # Returns
     /// Ok(()) on success, error otherwise
     async fn copy(&self, text: &str) -> Result<(), ClipboardError>;
+}
+
+/// Blanket implementation for boxed clipboard types
+#[async_trait]
+impl Clipboard for Box<dyn Clipboard> {
+    async fn copy(&self, text: &str) -> Result<(), ClipboardError> {
+        self.as_ref().copy(text).await
+    }
 }

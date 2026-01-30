@@ -1,13 +1,17 @@
 //! Unix Domain Socket communication for daemon control
+//!
+//! Used on Linux and macOS.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
+use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 
-use super::signals::DaemonSignal;
+use super::{IpcClient, IpcServer, StateFn};
+use crate::cli::signals::DaemonSignal;
 use crate::domain::daemon::DaemonState;
 
 /// Socket path resolver
@@ -17,7 +21,7 @@ pub struct SocketPath {
 }
 
 impl SocketPath {
-    /// Create socket path, preferring XDG_RUNTIME_DIR (Unix) or temp_dir (Windows)
+    /// Create socket path, preferring XDG_RUNTIME_DIR
     pub fn new() -> Self {
         let path = std::env::var("XDG_RUNTIME_DIR")
             .map(|dir| PathBuf::from(dir).join("smart-scribe.sock"))
@@ -50,13 +54,13 @@ impl Default for SocketPath {
     }
 }
 
-/// Daemon socket server - listens for commands and sends to channel
-pub struct DaemonSocketServer {
+/// Unix Domain Socket server for daemon commands
+pub struct UnixSocketServer {
     socket_path: SocketPath,
     listener: Option<UnixListener>,
 }
 
-impl DaemonSocketServer {
+impl UnixSocketServer {
     /// Create a new socket server
     pub fn new(socket_path: SocketPath) -> Self {
         Self {
@@ -64,9 +68,17 @@ impl DaemonSocketServer {
             listener: None,
         }
     }
+}
 
-    /// Bind to the socket
-    pub fn bind(&mut self) -> io::Result<()> {
+impl Drop for UnixSocketServer {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+#[async_trait]
+impl IpcServer for UnixSocketServer {
+    fn bind(&mut self) -> io::Result<()> {
         // Remove stale socket file if it exists
         self.socket_path.cleanup()?;
 
@@ -76,20 +88,11 @@ impl DaemonSocketServer {
         Ok(())
     }
 
-    /// Get the socket path
-    pub fn path(&self) -> &Path {
-        self.socket_path.path()
+    fn path(&self) -> String {
+        self.socket_path.path().to_string_lossy().to_string()
     }
 
-    /// Accept and handle connections
-    ///
-    /// This runs in a loop, accepting connections and processing commands.
-    /// Each command is sent to the provided channel.
-    /// The state_fn is called to get current daemon state for status queries.
-    pub async fn run<F>(&self, tx: mpsc::Sender<DaemonSignal>, state_fn: F) -> io::Result<()>
-    where
-        F: Fn() -> DaemonState + Send + Sync + 'static,
-    {
+    async fn run(&self, tx: mpsc::Sender<DaemonSignal>, state_fn: StateFn) -> io::Result<()> {
         let listener = self
             .listener
             .as_ref()
@@ -113,15 +116,8 @@ impl DaemonSocketServer {
         }
     }
 
-    /// Cleanup socket file
-    pub fn cleanup(&self) {
+    fn cleanup(&self) {
         let _ = self.socket_path.cleanup();
-    }
-}
-
-impl Drop for DaemonSocketServer {
-    fn drop(&mut self) {
-        self.cleanup();
     }
 }
 
@@ -163,24 +159,25 @@ async fn handle_connection(
     Ok(())
 }
 
-/// Daemon socket client - connects and sends commands
-pub struct DaemonSocketClient {
+/// Unix Domain Socket client for sending commands to daemon
+pub struct UnixSocketClient {
     socket_path: SocketPath,
 }
 
-impl DaemonSocketClient {
+impl UnixSocketClient {
     /// Create a new socket client
     pub fn new(socket_path: SocketPath) -> Self {
         Self { socket_path }
     }
+}
 
-    /// Check if daemon appears to be running (socket exists)
-    pub fn is_daemon_running(&self) -> bool {
+#[async_trait]
+impl IpcClient for UnixSocketClient {
+    fn is_daemon_running(&self) -> bool {
         self.socket_path.exists()
     }
 
-    /// Send a command and receive response
-    pub async fn send_command(&self, cmd: &str) -> io::Result<String> {
+    async fn send_command(&self, cmd: &str) -> io::Result<String> {
         let stream = UnixStream::connect(self.socket_path.path()).await?;
         let (reader, mut writer) = stream.into_split();
 
@@ -203,21 +200,16 @@ mod tests {
 
     #[test]
     fn socket_path_uses_xdg_runtime_dir() {
-        // Test path resolution with a specific value
         let path = std::env::var("XDG_RUNTIME_DIR")
             .map(|dir| PathBuf::from(dir).join("smart-scribe.sock"))
-            .unwrap_or_else(|_| PathBuf::from("/tmp/smart-scribe.sock"));
+            .unwrap_or_else(|_| std::env::temp_dir().join("smart-scribe.sock"));
 
-        // The actual SocketPath should match this logic
         let socket_path = SocketPath::new();
         assert_eq!(socket_path.path(), path.as_path());
     }
 
     #[test]
     fn socket_path_default_fallback() {
-        // Test that if XDG_RUNTIME_DIR is not set, we fallback to temp_dir
-        // We can't easily unset env vars in tests due to parallel execution,
-        // so just verify the fallback path is correct
         let fallback = std::env::temp_dir().join("smart-scribe.sock");
         assert!(fallback.to_string_lossy().contains("smart-scribe.sock"));
     }

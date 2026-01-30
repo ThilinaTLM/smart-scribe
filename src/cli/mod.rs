@@ -8,6 +8,7 @@ pub mod args;
 pub mod config_cmd;
 pub mod daemon_app;
 pub mod daemon_cmd;
+pub mod ipc;
 pub mod pid_file;
 pub mod presenter;
 pub mod signals;

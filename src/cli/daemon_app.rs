@@ -9,8 +9,8 @@ use tokio::time::timeout;
 use crate::application::{DaemonConfig, DaemonTranscriptionUseCase};
 use crate::domain::daemon::DaemonState;
 use crate::infrastructure::{
-    create_keystroke, FfmpegRecorder, GeminiTranscriber, NoOpKeystroke, NotifySendNotifier,
-    WaylandClipboard,
+    create_clipboard, create_keystroke, create_notifier, create_recorder, GeminiTranscriber,
+    NoOpKeystroke,
 };
 
 use super::app::{get_api_key, EXIT_ERROR, EXIT_SUCCESS};
@@ -47,11 +47,11 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
         }
     };
 
-    // Create adapters
-    let recorder = FfmpegRecorder::new();
+    // Create adapters (using cross-platform implementations)
+    let recorder = create_recorder();
     let transcriber = GeminiTranscriber::new(api_key);
-    let clipboard = WaylandClipboard::new();
-    let notifier = NotifySendNotifier::new();
+    let clipboard = create_clipboard();
+    let notifier = create_notifier();
 
     // Detect keystroke tool
     let keystroke: Box<dyn crate::application::ports::Keystroke> = match create_keystroke().await {

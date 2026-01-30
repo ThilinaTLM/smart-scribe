@@ -29,7 +29,7 @@ impl Default for YdotoolKeystroke {
 impl Keystroke for YdotoolKeystroke {
     async fn type_text(&self, text: &str) -> Result<(), KeystrokeError> {
         let status = Command::new("ydotool")
-            .args(["type", "--", text])
+            .args(["type", "--key-delay", "0", "--", text])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

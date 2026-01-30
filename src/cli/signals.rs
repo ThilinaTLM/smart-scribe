@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use colored::Colorize;
+#[cfg(unix)]
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 
@@ -34,12 +35,24 @@ impl ShutdownSignal {
     pub async fn setup(&self) -> Result<(), std::io::Error> {
         let shutdown = Arc::clone(&self.shutdown);
 
-        // Handle SIGINT (Ctrl+C)
-        let mut sigint = signal(SignalKind::interrupt())?;
-        tokio::spawn(async move {
-            sigint.recv().await;
-            shutdown.store(true, Ordering::SeqCst);
-        });
+        #[cfg(unix)]
+        {
+            // Handle SIGINT (Ctrl+C)
+            let mut sigint = signal(SignalKind::interrupt())?;
+            tokio::spawn(async move {
+                sigint.recv().await;
+                shutdown.store(true, Ordering::SeqCst);
+            });
+        }
+
+        #[cfg(windows)]
+        {
+            // Handle Ctrl+C on Windows
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                shutdown.store(true, Ordering::SeqCst);
+            });
+        }
 
         Ok(())
     }
@@ -78,23 +91,37 @@ impl DaemonSignalHandler {
     pub async fn new() -> Result<(Self, mpsc::Sender<DaemonSignal>), std::io::Error> {
         let (tx, rx) = mpsc::channel(10);
 
-        // Setup SIGINT handler (shutdown)
-        let tx_int = tx.clone();
-        let mut sigint = signal(SignalKind::interrupt())?;
-        tokio::spawn(async move {
-            sigint.recv().await;
-            eprintln!("{} Received SIGINT (shutdown)", "↓".cyan());
-            let _ = tx_int.send(DaemonSignal::Shutdown).await;
-        });
+        #[cfg(unix)]
+        {
+            // Setup SIGINT handler (shutdown)
+            let tx_int = tx.clone();
+            let mut sigint = signal(SignalKind::interrupt())?;
+            tokio::spawn(async move {
+                sigint.recv().await;
+                eprintln!("{} Received SIGINT (shutdown)", "↓".cyan());
+                let _ = tx_int.send(DaemonSignal::Shutdown).await;
+            });
 
-        // Setup SIGTERM handler (shutdown)
-        let tx_term = tx.clone();
-        let mut sigterm = signal(SignalKind::terminate())?;
-        tokio::spawn(async move {
-            sigterm.recv().await;
-            eprintln!("{} Received SIGTERM (shutdown)", "↓".cyan());
-            let _ = tx_term.send(DaemonSignal::Shutdown).await;
-        });
+            // Setup SIGTERM handler (shutdown)
+            let tx_term = tx.clone();
+            let mut sigterm = signal(SignalKind::terminate())?;
+            tokio::spawn(async move {
+                sigterm.recv().await;
+                eprintln!("{} Received SIGTERM (shutdown)", "↓".cyan());
+                let _ = tx_term.send(DaemonSignal::Shutdown).await;
+            });
+        }
+
+        #[cfg(windows)]
+        {
+            // Setup Ctrl+C handler (shutdown)
+            let tx_ctrl_c = tx.clone();
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                eprintln!("{} Received Ctrl+C (shutdown)", "↓".cyan());
+                let _ = tx_ctrl_c.send(DaemonSignal::Shutdown).await;
+            });
+        }
 
         Ok((Self { receiver: rx }, tx))
     }

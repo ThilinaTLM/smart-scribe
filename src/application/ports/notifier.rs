@@ -57,3 +57,16 @@ pub trait Notifier: Send + Sync {
         icon: NotificationIcon,
     ) -> Result<(), NotificationError>;
 }
+
+/// Blanket implementation for boxed notifier types
+#[async_trait]
+impl Notifier for Box<dyn Notifier> {
+    async fn notify(
+        &self,
+        title: &str,
+        message: &str,
+        icon: NotificationIcon,
+    ) -> Result<(), NotificationError> {
+        self.as_ref().notify(title, message, icon).await
+    }
+}

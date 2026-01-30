@@ -5,11 +5,38 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process;
 
+#[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
+#[cfg(unix)]
 use nix::unistd::Pid;
 
-/// Default PID file location
-const DEFAULT_PID_PATH: &str = "/tmp/smart-scribe.pid";
+/// Get the default PID file path (cross-platform)
+fn default_pid_path() -> PathBuf {
+    std::env::temp_dir().join("smart-scribe.pid")
+}
+
+/// Check if a process exists (cross-platform)
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    // Use SIGCONT (signal 0 equivalent) to check if process exists
+    kill(Pid::from_raw(pid as i32), Signal::SIGCONT).is_ok()
+}
+
+#[cfg(windows)]
+fn process_exists(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle != 0 {
+            CloseHandle(handle);
+            true
+        } else {
+            false
+        }
+    }
+}
 
 /// PID file for daemon mode
 pub struct PidFile {
@@ -20,7 +47,7 @@ impl PidFile {
     /// Create a new PID file manager with default path
     pub fn new() -> Self {
         Self {
-            path: PathBuf::from(DEFAULT_PID_PATH),
+            path: default_pid_path(),
         }
     }
 
@@ -56,16 +83,13 @@ impl PidFile {
             Err(_) => return None,
         };
 
-        // Check if process is still alive using signal 0
-        let pid_t = Pid::from_raw(pid as i32);
-        match kill(pid_t, Signal::SIGCONT) {
-            Ok(_) => Some(pid), // Process exists
-            Err(nix::errno::Errno::ESRCH) => {
-                // Process doesn't exist - stale PID file
-                let _ = fs::remove_file(&self.path);
-                None
-            }
-            Err(_) => None, // Other error - assume not running
+        // Check if process is still alive (platform-specific)
+        if process_exists(pid) {
+            Some(pid)
+        } else {
+            // Process doesn't exist - stale PID file
+            let _ = fs::remove_file(&self.path);
+            None
         }
     }
 
@@ -132,7 +156,7 @@ mod tests {
     #[test]
     fn new_uses_default_path() {
         let pid_file = PidFile::new();
-        assert_eq!(pid_file.path(), &PathBuf::from(DEFAULT_PID_PATH));
+        assert_eq!(pid_file.path(), &default_pid_path());
     }
 
     #[test]

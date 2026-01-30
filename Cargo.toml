@@ -40,8 +40,29 @@ base64 = "0.22"
 # Directory paths
 dirs = "5"
 
-# Unix signal handling
+# Cross-platform audio capture (replaces FFmpeg)
+cpal = "0.15"
+opus = "0.3"
+ogg = "0.9"
+
+# Cross-platform adapters
+arboard = "3"
+enigo = "0.2"
+notify-rust = "4"
+
+# Resampling for audio
+rubato = "0.16"
+
+# Unix-only dependencies
+[target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process"] }
+
+# Windows-only dependencies
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading"
+] }
 
 [dev-dependencies]
 # Testing
