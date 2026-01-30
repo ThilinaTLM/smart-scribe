@@ -206,7 +206,7 @@ mod tests {
         // Test path resolution with a specific value
         let path = std::env::var("XDG_RUNTIME_DIR")
             .map(|dir| PathBuf::from(dir).join("smart-scribe.sock"))
-            .unwrap_or_else(|_| PathBuf::from("/tmp/smart-scribe.sock"));
+            .unwrap_or_else(|_| std::env::temp_dir().join("smart-scribe.sock"));
 
         // The actual SocketPath should match this logic
         let socket_path = SocketPath::new();
