@@ -207,11 +207,11 @@ sudo cp target/release/smart-scribe /usr/local/bin/
 <details>
 <summary><strong>Build Dependencies</strong></summary>
 
-| Platform | Dependencies                               |
-| -------- | ------------------------------------------ |
-| Linux    | `libasound2-dev`, `libxdo-dev`             |
-| macOS    | `opus` (via Homebrew: `brew install opus`) |
-| Windows  | None                                       |
+| Platform | Dependencies                                                            |
+| -------- | ----------------------------------------------------------------------- |
+| Linux    | `libasound2-dev`, `libxdo-dev`, `libxkbcommon-dev`, `libwayland-dev`    |
+| macOS    | `opus` (via Homebrew: `brew install opus`)                              |
+| Windows  | None                                                                    |
 
 </details>
 
