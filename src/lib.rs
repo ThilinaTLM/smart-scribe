@@ -11,8 +11,11 @@
 //! - **Application**: Use cases and port interfaces (traits)
 //! - **Infrastructure**: Adapter implementations (FFmpeg, Gemini, clipboard, etc.)
 //! - **CLI**: Command-line interface, argument parsing, and signal handling
+//! - **GUI**: Recording indicator overlay (Linux only, uses Wayland layer-shell)
 
 pub mod application;
 pub mod cli;
 pub mod domain;
+#[cfg(target_os = "linux")]
+pub mod gui;
 pub mod infrastructure;

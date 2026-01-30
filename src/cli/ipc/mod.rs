@@ -15,13 +15,16 @@ pub use named_pipe::{NamedPipeClient, NamedPipeServer, PipePath};
 pub use unix_socket::{SocketPath, UnixSocketClient, UnixSocketServer};
 
 use std::io;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use super::signals::DaemonSignal;
-use crate::domain::daemon::DaemonState;
+use crate::domain::daemon::{DaemonState, StateUpdate};
 
 /// State function type for IPC servers
 pub type StateFn = Box<dyn Fn() -> DaemonState + Send + Sync>;
+
+/// Elapsed time function type for IPC servers
+pub type ElapsedFn = Box<dyn Fn() -> u64 + Send + Sync>;
 
 /// Trait for IPC servers that listen for daemon commands
 #[async_trait::async_trait]
@@ -37,7 +40,13 @@ pub trait IpcServer: Send + Sync {
     /// This runs in a loop, accepting connections and processing commands.
     /// Each command is sent to the provided channel.
     /// The state_fn is called to get current daemon state for status queries.
-    async fn run(&self, tx: mpsc::Sender<DaemonSignal>, state_fn: StateFn) -> io::Result<()>;
+    async fn run(
+        &self,
+        tx: mpsc::Sender<DaemonSignal>,
+        state_fn: StateFn,
+        elapsed_fn: ElapsedFn,
+        state_rx: broadcast::Receiver<StateUpdate>,
+    ) -> io::Result<()>;
 
     /// Cleanup IPC resources
     fn cleanup(&self);
