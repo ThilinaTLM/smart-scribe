@@ -1,24 +1,21 @@
-//! Daemon command handler - sends commands to running daemon via socket
+//! Daemon command handler - sends commands to running daemon via IPC
 
 use super::args::DaemonAction;
+use super::ipc::create_ipc_client;
 use super::presenter::Presenter;
-use super::socket::{DaemonSocketClient, SocketPath};
 
 /// Handle daemon subcommand
 pub async fn handle_daemon_command(
     action: DaemonAction,
     presenter: &Presenter,
 ) -> Result<(), String> {
-    let socket_path = SocketPath::new();
-    let client = DaemonSocketClient::new(socket_path.clone());
+    let client = create_ipc_client();
 
     // Check if daemon is running
     if !client.is_daemon_running() {
-        return Err(format!(
-            "No daemon running. Start with: smart-scribe --daemon\n\
-             (Expected socket at: {})",
-            socket_path.path().display()
-        ));
+        return Err(
+            "No daemon running. Start with: smart-scribe --daemon".to_string()
+        );
     }
 
     let cmd = match action {

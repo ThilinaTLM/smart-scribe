@@ -29,7 +29,7 @@ fn process_exists(pid: u32) -> bool {
 
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle != 0 {
+        if !handle.is_null() {
             CloseHandle(handle);
             true
         } else {

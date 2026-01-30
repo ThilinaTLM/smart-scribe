@@ -15,10 +15,10 @@ use crate::infrastructure::{
 
 use super::app::{get_api_key, EXIT_ERROR, EXIT_SUCCESS};
 use super::args::DaemonOptions;
+use super::ipc::create_ipc_server;
 use super::pid_file::{PidFile, PidFileError};
 use super::presenter::Presenter;
 use super::signals::{DaemonSignal, DaemonSignalHandler};
-use super::socket::{DaemonSocketServer, SocketPath};
 
 /// Run daemon mode
 pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
@@ -95,41 +95,44 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
         }
     };
 
-    // Setup socket server
-    let socket_path = SocketPath::new();
-    let mut socket_server = DaemonSocketServer::new(socket_path.clone());
+    // Setup IPC server (Unix socket on Linux/macOS, named pipe on Windows)
+    let mut ipc_server = create_ipc_server();
+    let ipc_path = ipc_server.path();
 
-    if let Err(e) = socket_server.bind() {
-        presenter.error(&format!("Failed to bind socket: {}", e));
+    if let Err(e) = ipc_server.bind() {
+        presenter.error(&format!("Failed to bind IPC: {}", e));
         return ExitCode::from(EXIT_ERROR);
     }
 
-    // Wrap state in Arc<Mutex> for sharing with socket server
+    // Wrap state in Arc<Mutex> for sharing with IPC server
     let state = Arc::new(Mutex::new(DaemonState::Idle));
-    let state_for_socket = Arc::clone(&state);
+    let state_for_ipc = Arc::clone(&state);
 
-    // Spawn socket server task
+    // Spawn IPC server task
     tokio::spawn(async move {
-        let _ = socket_server
-            .run(signal_tx, move || {
-                // Use std::sync::Mutex - safe because lock is very brief
-                *state_for_socket.lock().unwrap_or_else(|e| e.into_inner())
-            })
+        let _ = ipc_server
+            .run(
+                signal_tx,
+                Box::new(move || {
+                    // Use std::sync::Mutex - safe because lock is very brief
+                    *state_for_ipc.lock().unwrap_or_else(|e| e.into_inner())
+                }),
+            )
             .await;
     });
 
     presenter.daemon_status("Started, waiting for commands...");
     presenter.info(&format!(
-        "PID: {} | Socket: {} | SIGINT: exit",
+        "PID: {} | IPC: {} | SIGINT: exit",
         std::process::id(),
-        socket_path.path().display()
+        ipc_path
     ));
 
     // Main signal loop
     let max_duration_ms = options.max_duration.as_millis();
     let result = daemon_loop(&use_case, &mut signals, &presenter, max_duration_ms, &state).await;
 
-    // Cleanup (socket server Drop will clean up socket file)
+    // Cleanup (IPC server Drop will clean up resources)
     let _ = pid_file.release();
 
     if result {

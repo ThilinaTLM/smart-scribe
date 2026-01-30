@@ -1,4 +1,7 @@
 //! Unix Domain Socket communication for daemon control
+//!
+//! NOTE: This module is deprecated. Use `ipc` module instead which provides
+//! cross-platform support (Unix sockets on Linux/macOS, named pipes on Windows).
 
 use std::io;
 use std::path::{Path, PathBuf};

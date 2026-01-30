@@ -12,6 +12,7 @@ pub mod ipc;
 pub mod pid_file;
 pub mod presenter;
 pub mod signals;
+#[cfg(unix)]
 pub mod socket;
 
 // Re-export commonly used types
