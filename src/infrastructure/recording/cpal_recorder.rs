@@ -1,9 +1,9 @@
 //! Cross-platform audio recorder using cpal
 //!
-//! Matches FFmpeg's speech-optimized settings:
+//! Speech-optimized settings:
 //! - 16kHz sample rate (or resampling from device rate)
 //! - Mono channel
-//! - Opus codec via separate encoder
+//! - FLAC encoding (lossless, Gemini-compatible)
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -15,7 +15,7 @@ use cpal::{SampleFormat, SampleRate, StreamConfig};
 use rubato::{FftFixedIn, Resampler};
 use tokio::time::{interval, Duration as TokioDuration};
 
-use super::opus_encoder::{OpusEncoder, TARGET_SAMPLE_RATE};
+use super::flac_encoder::{encode_to_flac, TARGET_SAMPLE_RATE};
 use crate::application::ports::{
     AudioRecorder, ProgressCallback, RecordingError, UnboundedRecorder,
 };
@@ -190,24 +190,20 @@ impl CpalRecorder {
             .collect()
     }
 
-    /// Encode PCM samples to Opus OGG format
+    /// Encode PCM samples to FLAC format (lossless, Gemini-compatible)
     fn encode_audio(samples: &[i16], sample_rate: u32) -> Result<AudioData, RecordingError> {
         // Resample to 16kHz if needed
         let resampled = Self::resample_to_16k(samples, sample_rate)?;
 
-        // Encode to Opus OGG
-        let mut encoder = OpusEncoder::new()
-            .map_err(|e| RecordingError::RecordingFailed(format!("Opus init failed: {}", e)))?;
+        // Encode to FLAC (lossless encoding for best transcription quality)
+        let flac_data = encode_to_flac(&resampled)
+            .map_err(|e| RecordingError::RecordingFailed(format!("FLAC encoding failed: {}", e)))?;
 
-        let ogg_data = encoder
-            .encode_to_ogg(&resampled)
-            .map_err(|e| RecordingError::RecordingFailed(format!("Encoding failed: {}", e)))?;
-
-        if ogg_data.is_empty() {
+        if flac_data.is_empty() {
             return Err(RecordingError::ReadFailed("Encoded audio is empty".into()));
         }
 
-        Ok(AudioData::new(ogg_data, AudioMimeType::Ogg))
+        Ok(AudioData::new(flac_data, AudioMimeType::Flac))
     }
 }
 
@@ -350,7 +346,7 @@ impl AudioRecorder for CpalRecorder {
             ));
         }
 
-        // Encode to Opus OGG (in blocking task for CPU-intensive work)
+        // Encode to FLAC (in blocking task for CPU-intensive work)
         let encoded =
             tokio::task::spawn_blocking(move || Self::encode_audio(&samples, sample_rate))
                 .await
@@ -534,7 +530,7 @@ impl UnboundedRecorder for CpalRecorder {
             ));
         }
 
-        // Encode to Opus OGG
+        // Encode to FLAC
         let encoded =
             tokio::task::spawn_blocking(move || Self::encode_audio(&samples, sample_rate))
                 .await
