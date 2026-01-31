@@ -8,7 +8,7 @@ use crate::domain::transcription::DomainId;
 /// SmartScribe - AI-powered voice to text transcription
 #[derive(Parser, Debug)]
 #[command(name = "smart-scribe")]
-#[command(version = "2.0.0")]
+#[command(version)]
 #[command(about = "AI-powered voice to text transcription using Google Gemini")]
 #[command(long_about = None)]
 pub struct Cli {

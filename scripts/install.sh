@@ -90,6 +90,25 @@ download() {
     fi
 }
 
+# Get currently installed version (if any)
+get_installed_version() {
+    local install_path="$1"
+    local binary="${install_path}/${BINARY_NAME}"
+
+    if [ -x "$binary" ]; then
+        local version_output
+        version_output=$("$binary" --version 2>/dev/null) || true
+        if [ -n "$version_output" ]; then
+            echo "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
+        fi
+    fi
+}
+
+# Normalize version (strip leading 'v')
+normalize_version() {
+    echo "$1" | sed 's/^v//'
+}
+
 # Check for recommended dependencies (warn only, don't fail)
 check_dependencies() {
     local os="$1"
@@ -142,13 +161,10 @@ main() {
         error "Could not determine version to install"
     fi
 
-    info "Installing version: ${VERSION_TAG}"
+    # Normalize version for comparison
+    TARGET_VERSION=$(normalize_version "$VERSION_TAG")
 
-    # Construct artifact name
-    ARTIFACT="${BINARY_NAME}-${OS}-${ARCH}"
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION_TAG}/${ARTIFACT}"
-
-    # Determine install directory
+    # Determine install directory (needed early for version check)
     if [ -n "${INSTALL_DIR:-}" ]; then
         INSTALL_PATH="$INSTALL_DIR"
     elif [ -w "/usr/local/bin" ]; then
@@ -156,6 +172,25 @@ main() {
     else
         INSTALL_PATH="${HOME}/.local/bin"
     fi
+
+    # Check for existing installation
+    CURRENT_VERSION=$(get_installed_version "$INSTALL_PATH")
+
+    # Determine install type and show appropriate message
+    if [ -z "$CURRENT_VERSION" ]; then
+        INSTALL_TYPE="fresh"
+        info "Installing smart-scribe v${TARGET_VERSION}..."
+    elif [ "$CURRENT_VERSION" = "$TARGET_VERSION" ]; then
+        INSTALL_TYPE="reinstall"
+        info "Reinstalling smart-scribe v${TARGET_VERSION}..."
+    else
+        INSTALL_TYPE="update"
+        info "Updating smart-scribe from v${CURRENT_VERSION} to v${TARGET_VERSION}..."
+    fi
+
+    # Construct artifact name
+    ARTIFACT="${BINARY_NAME}-${OS}-${ARCH}"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION_TAG}/${ARTIFACT}"
 
     # Create install directory if needed
     if [ ! -d "$INSTALL_PATH" ]; then
@@ -179,8 +214,18 @@ main() {
 
     # Verify installation
     if [ -x "${INSTALL_PATH}/${BINARY_NAME}" ]; then
-        INSTALLED_VERSION=$("${INSTALL_PATH}/${BINARY_NAME}" --version 2>/dev/null || echo "unknown")
-        success "Installed: ${INSTALLED_VERSION}"
+        INSTALLED_VERSION=$("${INSTALL_PATH}/${BINARY_NAME}" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "unknown")
+        case "$INSTALL_TYPE" in
+            fresh)
+                success "Successfully installed: smart-scribe ${INSTALLED_VERSION}"
+                ;;
+            update)
+                success "Successfully updated: smart-scribe ${INSTALLED_VERSION}"
+                ;;
+            reinstall)
+                success "Successfully reinstalled: smart-scribe ${INSTALLED_VERSION}"
+                ;;
+        esac
     else
         error "Installation failed - binary not executable"
     fi
