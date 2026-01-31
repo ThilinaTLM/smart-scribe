@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub clipboard: Option<bool>,
     pub keystroke: Option<bool>,
     pub notify: Option<bool>,
+    pub audio_cue: Option<bool>,
     pub linux: Option<LinuxConfig>,
 }
 
@@ -38,6 +39,7 @@ impl AppConfig {
             clipboard: Some(false),
             keystroke: Some(false),
             notify: Some(false),
+            audio_cue: Some(false),
             linux: Some(LinuxConfig {
                 keystroke_tool: Some("enigo".to_string()),
                 indicator: Some(false),
@@ -62,6 +64,7 @@ impl AppConfig {
             clipboard: other.clipboard.or(self.clipboard),
             keystroke: other.keystroke.or(self.keystroke),
             notify: other.notify.or(self.notify),
+            audio_cue: other.audio_cue.or(self.audio_cue),
             linux: Self::merge_linux_config(self.linux, other.linux),
         }
     }
@@ -122,6 +125,11 @@ impl AppConfig {
         self.notify.unwrap_or(false)
     }
 
+    /// Get audio_cue setting, or false if not set
+    pub fn audio_cue_or_default(&self) -> bool {
+        self.audio_cue.unwrap_or(false)
+    }
+
     /// Get indicator setting, or false if not set (Linux only)
     #[cfg(target_os = "linux")]
     pub fn indicator_or_default(&self) -> bool {
@@ -163,6 +171,7 @@ mod tests {
         assert_eq!(config.clipboard, Some(false));
         assert_eq!(config.keystroke, Some(false));
         assert_eq!(config.notify, Some(false));
+        assert_eq!(config.audio_cue, Some(false));
         assert_eq!(config.keystroke_tool_or_default(), "enigo");
         // Linux-specific defaults
         let linux = config.linux.as_ref().unwrap();
@@ -266,6 +275,7 @@ mod tests {
         assert!(!config.clipboard_or_default());
         assert!(!config.keystroke_or_default());
         assert!(!config.notify_or_default());
+        assert!(!config.audio_cue_or_default());
     }
 
     #[test]

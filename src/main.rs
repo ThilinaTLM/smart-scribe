@@ -76,6 +76,7 @@ async fn main() -> ExitCode {
             clipboard: if cli.clipboard { Some(true) } else { None },
             keystroke: if cli.keystroke { Some(true) } else { None },
             notify: if cli.notify { Some(true) } else { None },
+            audio_cue: if cli.audio_cue { Some(true) } else { None },
             linux,
         }
     };
@@ -91,6 +92,7 @@ async fn main() -> ExitCode {
         clipboard: if cli.clipboard { Some(true) } else { None },
         keystroke: if cli.keystroke { Some(true) } else { None },
         notify: if cli.notify { Some(true) } else { None },
+        audio_cue: if cli.audio_cue { Some(true) } else { None },
         linux: None,
     };
 
@@ -124,6 +126,7 @@ async fn main() -> ExitCode {
             keystroke: config.keystroke_or_default(),
             keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
             notify: config.notify_or_default(),
+            audio_cue: config.audio_cue_or_default(),
             #[cfg(target_os = "linux")]
             indicator: config.indicator_or_default(),
             #[cfg(target_os = "linux")]
@@ -151,6 +154,7 @@ async fn main() -> ExitCode {
             keystroke: config.keystroke_or_default(),
             keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
             notify: config.notify_or_default(),
+            audio_cue: config.audio_cue_or_default(),
         };
 
         run_oneshot(options).await

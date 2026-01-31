@@ -3,6 +3,7 @@
 //! Contains concrete implementations of the port interfaces,
 //! integrating with external systems like FFmpeg, Gemini API, etc.
 
+pub mod audio_cue;
 pub mod clipboard;
 pub mod config;
 pub mod keystroke;
@@ -11,6 +12,7 @@ pub mod recording;
 pub mod transcription;
 
 // Re-export adapters
+pub use audio_cue::{create_audio_cue, NoOpAudioCue, RodioAudioCue};
 pub use clipboard::{create_clipboard, ArboardClipboard, WaylandClipboard};
 pub use config::XdgConfigStore;
 pub use keystroke::{

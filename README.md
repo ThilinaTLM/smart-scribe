@@ -53,6 +53,7 @@ The install scripts automatically detect fresh installs, updates, and reinstalls
 - **Clipboard integration** - Copy transcriptions directly (`-c`)
 - **Keystroke output** - Type into focused window (`-k`)
 - **Desktop notifications** - Get notified when done (`-n`)
+- **Audio cues** - Audible beeps when recording starts/stops (`-a`)
 - **Daemon mode** - Background service for hotkey integration
 
 ### Platform Support
@@ -137,6 +138,7 @@ smart-scribe config path              # Show config file location
 | `-k, --keystroke`         | Type into focused window            | off     |
 | `--keystroke-tool <TOOL>` | Keystroke tool (Linux only)         | enigo   |
 | `-n, --notify`            | Desktop notifications               | off     |
+| `-a, --audio-cue`         | Play audio cues on recording events | off     |
 | `--daemon`                | Run in daemon mode                  | off     |
 | `--max-duration <TIME>`   | Max recording (daemon safety limit) | 60s     |
 

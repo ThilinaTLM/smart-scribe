@@ -36,6 +36,10 @@ pub struct Cli {
     #[arg(short = 'n', long)]
     pub notify: bool,
 
+    /// Play audio cues on recording events
+    #[arg(short = 'a', long)]
+    pub audio_cue: bool,
+
     /// Run as daemon (control via: smart-scribe daemon toggle/cancel/status)
     #[arg(long)]
     pub daemon: bool,
@@ -187,6 +191,7 @@ pub struct TranscribeOptions {
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
     pub notify: bool,
+    pub audio_cue: bool,
 }
 
 /// Parsed daemon options
@@ -198,6 +203,7 @@ pub struct DaemonOptions {
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
     pub notify: bool,
+    pub audio_cue: bool,
     #[cfg(target_os = "linux")]
     pub indicator: bool,
     #[cfg(target_os = "linux")]
@@ -214,6 +220,7 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "clipboard",
     "keystroke",
     "notify",
+    "audio_cue",
     "linux.keystroke_tool",
     "linux.indicator",
     "linux.indicator_position",
@@ -229,6 +236,7 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "clipboard",
     "keystroke",
     "notify",
+    "audio_cue",
 ];
 
 /// Valid keystroke tool values for all platforms
@@ -260,6 +268,7 @@ mod tests {
         assert!(!cli.keystroke);
         assert!(cli.keystroke_tool.is_none());
         assert!(!cli.notify);
+        assert!(!cli.audio_cue);
         assert!(!cli.daemon);
     }
 
@@ -277,10 +286,11 @@ mod tests {
 
     #[test]
     fn cli_parses_flags() {
-        let cli = Cli::parse_from(["smart-scribe", "-c", "-k", "-n"]);
+        let cli = Cli::parse_from(["smart-scribe", "-c", "-k", "-n", "-a"]);
         assert!(cli.clipboard);
         assert!(cli.keystroke);
         assert!(cli.notify);
+        assert!(cli.audio_cue);
     }
 
     #[test]
