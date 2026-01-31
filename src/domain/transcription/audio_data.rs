@@ -12,6 +12,7 @@ pub enum AudioMimeType {
     Wav,
     Webm,
     Mp4,
+    Flac,
 }
 
 impl AudioMimeType {
@@ -24,6 +25,7 @@ impl AudioMimeType {
             Self::Wav => "audio/wav",
             Self::Webm => "audio/webm",
             Self::Mp4 => "audio/mp4",
+            Self::Flac => "audio/flac",
         }
     }
 
@@ -35,6 +37,7 @@ impl AudioMimeType {
             Self::Wav => "wav",
             Self::Webm => "webm",
             Self::Mp4 => "mp4",
+            Self::Flac => "flac",
         }
     }
 }

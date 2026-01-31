@@ -42,8 +42,9 @@ dirs = "5"
 
 # Cross-platform audio capture (replaces FFmpeg)
 cpal = "0.15"
-opus = "0.3"
-ogg = "0.9"
+
+# FLAC encoding for Gemini API (lossless, explicitly supported)
+flacenc = "0.4"
 
 # Cross-platform adapters
 arboard = "3"
