@@ -1,7 +1,7 @@
 //! Infrastructure layer - Adapter implementations
 //!
 //! Contains concrete implementations of the port interfaces,
-//! integrating with external systems like FFmpeg, Gemini API, etc.
+//! integrating with external systems like Gemini API, clipboard, etc.
 
 pub mod audio_cue;
 pub mod clipboard;
@@ -20,5 +20,5 @@ pub use keystroke::{
     KeystrokeToolPreference, NoOpKeystroke, ParseKeystrokeToolError, YdotoolKeystroke,
 };
 pub use notification::{create_notifier, NotifyRustNotifier, NotifySendNotifier};
-pub use recording::{create_recorder, CpalRecorder, FfmpegRecorder};
+pub use recording::{create_recorder, CpalRecorder};
 pub use transcription::GeminiTranscriber;

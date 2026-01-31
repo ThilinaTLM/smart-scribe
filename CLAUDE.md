@@ -103,7 +103,7 @@ src/
 
 | Port | Cross-Platform Adapter | Platform-Specific |
 |------|----------------------|-------------------|
-| `AudioRecorder` | `CpalRecorder` (cpal) | `FfmpegRecorder` (fallback) |
+| `AudioRecorder` | `CpalRecorder` (cpal) | - |
 | `Transcriber` | `GeminiTranscriber` | - |
 | `Clipboard` | `ArboardClipboard` (arboard) | `WaylandClipboard` (wl-copy) |
 | `Keystroke` | `EnigoKeystroke` (enigo) | `Xdotool`, `Wtype`, `Ydotool` (Linux) |
@@ -127,7 +127,7 @@ src/
 **Audio Recording (cpal):**
 - Captures at device sample rate
 - Resamples to 16kHz via rubato
-- Encodes to Opus OGG format
+- Encodes to FLAC format (lossless)
 
 **Clipboard (arboard):**
 - Works on Windows, macOS, Linux (X11/Wayland)
@@ -199,5 +199,5 @@ cargo test --test transcription_tests -- --ignored  # API tests (needs key)
 ## Gemini API
 
 - Model: `gemini-2.0-flash-lite`
-- Audio sent as base64 Opus OGG
+- Audio sent as base64 FLAC (lossless)
 - Domain-specific system prompts for context-aware transcription

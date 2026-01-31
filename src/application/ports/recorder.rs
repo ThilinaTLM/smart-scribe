@@ -22,9 +22,6 @@ pub enum RecordingError {
     #[error("Recording was cancelled")]
     Cancelled,
 
-    #[error("FFmpeg not found. Please install FFmpeg.")]
-    FfmpegNotFound,
-
     #[error("No audio device available")]
     NoAudioDevice,
 }
