@@ -36,6 +36,15 @@ impl AudioCue for RodioAudioCue {
     }
 }
 
+/// Create a gentle tone with fade in/out for a smoother sound
+fn gentle_tone(freq: f32, duration_ms: u64, amplitude: f32) -> impl Source<Item = f32> + Send {
+    let fade_ms = (duration_ms / 5).min(30); // 20% fade or max 30ms
+    SineWave::new(freq)
+        .take_duration(Duration::from_millis(duration_ms))
+        .fade_in(Duration::from_millis(fade_ms))
+        .amplify(amplitude)
+}
+
 /// Play a cue synchronously (called from spawn_blocking)
 fn play_cue_sync(cue_type: AudioCueType) -> Result<(), AudioCueError> {
     // Get output stream
@@ -45,38 +54,34 @@ fn play_cue_sync(cue_type: AudioCueType) -> Result<(), AudioCueError> {
     let sink =
         Sink::try_new(&stream_handle).map_err(|e| AudioCueError::PlaybackFailed(e.to_string()))?;
 
-    // Amplitude (0.5 to avoid clipping)
-    const AMPLITUDE: f32 = 0.5;
+    // Softer amplitude for pleasant sound
+    const AMP: f32 = 0.3;
 
     match cue_type {
         AudioCueType::RecordingStart => {
-            // High beep: 880Hz for 150ms
-            let source = SineWave::new(880.0)
-                .take_duration(Duration::from_millis(150))
-                .amplify(AMPLITUDE);
-            sink.append(source);
+            // Pleasant ascending chime: C5 -> E5 (major third)
+            // 523Hz (C5) -> 659Hz (E5)
+            let tone1 = gentle_tone(523.0, 80, AMP);
+            let tone2 = gentle_tone(659.0, 120, AMP);
+            sink.append(tone1);
+            sink.append(tone2);
         }
         AudioCueType::RecordingStop => {
-            // Low beep: 440Hz for 150ms
-            let source = SineWave::new(440.0)
-                .take_duration(Duration::from_millis(150))
-                .amplify(AMPLITUDE);
-            sink.append(source);
+            // Pleasant descending chime: E5 -> C5 (major third down)
+            let tone1 = gentle_tone(659.0, 80, AMP);
+            let tone2 = gentle_tone(523.0, 120, AMP);
+            sink.append(tone1);
+            sink.append(tone2);
         }
         AudioCueType::RecordingCancel => {
-            // Double-beep: 330Hz, 2×75ms with 50ms gap
-            let beep1 = SineWave::new(330.0)
-                .take_duration(Duration::from_millis(75))
-                .amplify(AMPLITUDE);
+            // Gentle double-tap: G4 twice
+            let tone1 = gentle_tone(392.0, 60, AMP * 0.8);
             let silence =
-                rodio::source::Zero::<f32>::new(1, 44100).take_duration(Duration::from_millis(50));
-            let beep2 = SineWave::new(330.0)
-                .take_duration(Duration::from_millis(75))
-                .amplify(AMPLITUDE);
-
-            sink.append(beep1);
+                rodio::source::Zero::<f32>::new(1, 44100).take_duration(Duration::from_millis(40));
+            let tone2 = gentle_tone(392.0, 60, AMP * 0.8);
+            sink.append(tone1);
             sink.append(silence);
-            sink.append(beep2);
+            sink.append(tone2);
         }
     }
 
