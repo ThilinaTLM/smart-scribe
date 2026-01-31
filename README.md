@@ -27,6 +27,8 @@ curl -sSL https://raw.githubusercontent.com/ThilinaTLM/smart-scribe/main/scripts
 irm https://raw.githubusercontent.com/ThilinaTLM/smart-scribe/main/scripts/install.ps1 | iex
 ```
 
+The install scripts automatically detect fresh installs, updates, and reinstalls.
+
 ## Quick Start
 
 1. **Get an API key** from [Google AI Studio](https://aistudio.google.com/apikey)
