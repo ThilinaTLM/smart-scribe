@@ -53,6 +53,29 @@ function Get-InstallPath {
     return "$env:LOCALAPPDATA\Programs\smart-scribe"
 }
 
+function Get-InstalledVersion {
+    param([string]$InstallPath)
+
+    $binaryPath = Join-Path $InstallPath $BinaryName
+    if (Test-Path $binaryPath) {
+        try {
+            $versionOutput = & $binaryPath --version 2>&1
+            if ($versionOutput -match '(\d+\.\d+\.\d+)') {
+                return $Matches[1]
+            }
+        }
+        catch {
+            return $null
+        }
+    }
+    return $null
+}
+
+function Get-NormalizedVersion {
+    param([string]$Version)
+    return $Version -replace '^v', ''
+}
+
 function Add-ToPath {
     param([string]$Directory)
 
@@ -93,14 +116,30 @@ function Main {
         Write-Error "Could not determine version to install"
     }
 
-    Write-Info "Installing version: $version"
-
     # Construct download URL
     $artifact = "smart-scribe-windows-x86_64.exe"
     $downloadUrl = "https://github.com/$Repo/releases/download/$version/$artifact"
 
     # Determine install directory
     $installPath = Get-InstallPath
+
+    # Check for existing installation
+    $currentVersion = Get-InstalledVersion -InstallPath $installPath
+    $targetVersion = Get-NormalizedVersion -Version $version
+
+    # Determine install type and show appropriate message
+    if (-not $currentVersion) {
+        $installType = "fresh"
+        Write-Info "Installing smart-scribe v$targetVersion..."
+    }
+    elseif ($currentVersion -eq $targetVersion) {
+        $installType = "reinstall"
+        Write-Info "Reinstalling smart-scribe v$targetVersion..."
+    }
+    else {
+        $installType = "update"
+        Write-Info "Updating smart-scribe from v$currentVersion to v$targetVersion..."
+    }
 
     # Create install directory if needed
     if (-not (Test-Path $installPath)) {
@@ -130,7 +169,17 @@ function Main {
     if (Test-Path $binaryPath) {
         try {
             $installedVersion = & $binaryPath --version 2>&1
-            Write-Success "Installed: $installedVersion"
+            if ($installedVersion -match '(\d+\.\d+\.\d+)') {
+                $versionNum = $Matches[1]
+            } else {
+                $versionNum = "unknown"
+            }
+
+            switch ($installType) {
+                "fresh"     { Write-Success "Successfully installed: smart-scribe $versionNum" }
+                "update"    { Write-Success "Successfully updated: smart-scribe $versionNum" }
+                "reinstall" { Write-Success "Successfully reinstalled: smart-scribe $versionNum" }
+            }
         }
         catch {
             Write-Success "Binary installed (version check skipped)"
