@@ -12,36 +12,27 @@ fn get_api_key() -> Option<String> {
     std::env::var("GEMINI_API_KEY").ok()
 }
 
-/// Create a minimal valid audio file (silent OGG)
-/// This is a tiny valid OGG container that the API can accept
+/// Create a minimal valid audio file (silent FLAC)
+/// This is a tiny valid FLAC container that the API can accept
 fn create_test_audio() -> AudioData {
-    // A minimal silent OGG file header
-    // This is enough to be parsed as valid audio by the API
-    let ogg_header: Vec<u8> = vec![
-        // OggS header
-        0x4f, 0x67, 0x67, 0x53, // "OggS"
-        0x00, // version
-        0x02, // header type (first page)
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // granule position
-        0x00, 0x00, 0x00, 0x00, // serial number
-        0x00, 0x00, 0x00, 0x00, // page sequence
-        0x00, 0x00, 0x00, 0x00, // checksum (will be invalid but API may still accept)
-        0x01, // segments
-        0x1e, // segment length
-        // Vorbis identification header
-        0x01, // packet type
-        0x76, 0x6f, 0x72, 0x62, 0x69, 0x73, // "vorbis"
-        0x00, 0x00, 0x00, 0x00, // version
-        0x01, // channels
-        0x44, 0xac, 0x00, 0x00, // sample rate (44100)
-        0x00, 0x00, 0x00, 0x00, // bitrate max
-        0x80, 0xbb, 0x00, 0x00, // bitrate nominal
-        0x00, 0x00, 0x00, 0x00, // bitrate min
-        0xb8, // blocksize
-        0x01, // framing
+    // A minimal FLAC file header with streaminfo metadata block
+    let flac_header: Vec<u8> = vec![
+        // FLAC stream marker
+        0x66, 0x4c, 0x61, 0x43, // "fLaC"
+        // STREAMINFO metadata block header (last block = 0x80, type = 0, length = 34)
+        0x80, 0x00, 0x00, 0x22, // STREAMINFO data (34 bytes)
+        0x10, 0x00, // min block size (4096)
+        0x10, 0x00, // max block size (4096)
+        0x00, 0x00, 0x00, // min frame size
+        0x00, 0x00, 0x00, // max frame size
+        0x03, 0xe8, 0x00, // sample rate (16000 Hz) + bits (16) + channels (1)
+        0x00, 0x00, 0x00, 0x00, 0x00, // sample rate cont + total samples
+        // MD5 signature (16 bytes, zeros for test)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
     ];
 
-    AudioData::new(ogg_header, AudioMimeType::Ogg)
+    AudioData::new(flac_header, AudioMimeType::Flac)
 }
 
 #[tokio::test]
@@ -143,8 +134,8 @@ fn transcriber_builds_correct_api_url() {
 #[test]
 fn audio_data_formats() {
     // Test different audio formats
-    let ogg = AudioData::new(vec![1, 2, 3], AudioMimeType::Ogg);
-    assert_eq!(ogg.mime_type().to_string(), "audio/ogg");
+    let flac = AudioData::new(vec![1, 2, 3], AudioMimeType::Flac);
+    assert_eq!(flac.mime_type().to_string(), "audio/flac");
 
     let mp3 = AudioData::new(vec![1, 2, 3], AudioMimeType::Mp3);
     assert_eq!(mp3.mime_type().to_string(), "audio/mp3");

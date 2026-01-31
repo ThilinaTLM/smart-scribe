@@ -9,7 +9,7 @@
 //!
 //! - **Domain**: Core business logic, value objects, entities, and errors
 //! - **Application**: Use cases and port interfaces (traits)
-//! - **Infrastructure**: Adapter implementations (FFmpeg, Gemini, clipboard, etc.)
+//! - **Infrastructure**: Adapter implementations (cpal, Gemini, clipboard, etc.)
 //! - **CLI**: Command-line interface, argument parsing, and signal handling
 //! - **GUI**: Recording indicator overlay (Linux only, uses Wayland layer-shell)
 

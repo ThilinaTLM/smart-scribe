@@ -5,13 +5,12 @@ use std::fmt;
 /// Supported audio MIME types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AudioMimeType {
-    #[default]
-    Ogg,
     Mp3,
     Mpeg,
     Wav,
     Webm,
     Mp4,
+    #[default]
     Flac,
 }
 
@@ -19,7 +18,6 @@ impl AudioMimeType {
     /// Get the MIME type string
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::Ogg => "audio/ogg",
             Self::Mp3 => "audio/mp3",
             Self::Mpeg => "audio/mpeg",
             Self::Wav => "audio/wav",
@@ -32,7 +30,6 @@ impl AudioMimeType {
     /// Get the file extension
     pub const fn extension(&self) -> &'static str {
         match self {
-            Self::Ogg => "ogg",
             Self::Mp3 | Self::Mpeg => "mp3",
             Self::Wav => "wav",
             Self::Webm => "webm",
@@ -115,45 +112,45 @@ mod tests {
 
     #[test]
     fn mime_type_as_str() {
-        assert_eq!(AudioMimeType::Ogg.as_str(), "audio/ogg");
+        assert_eq!(AudioMimeType::Flac.as_str(), "audio/flac");
         assert_eq!(AudioMimeType::Mp3.as_str(), "audio/mp3");
         assert_eq!(AudioMimeType::Wav.as_str(), "audio/wav");
     }
 
     #[test]
     fn mime_type_extension() {
-        assert_eq!(AudioMimeType::Ogg.extension(), "ogg");
+        assert_eq!(AudioMimeType::Flac.extension(), "flac");
         assert_eq!(AudioMimeType::Mp3.extension(), "mp3");
         assert_eq!(AudioMimeType::Wav.extension(), "wav");
     }
 
     #[test]
     fn audio_data_size() {
-        let data = AudioData::new(vec![0u8; 1024], AudioMimeType::Ogg);
+        let data = AudioData::new(vec![0u8; 1024], AudioMimeType::Flac);
         assert_eq!(data.size_bytes(), 1024);
     }
 
     #[test]
     fn human_readable_size_bytes() {
-        let data = AudioData::new(vec![0u8; 500], AudioMimeType::Ogg);
+        let data = AudioData::new(vec![0u8; 500], AudioMimeType::Flac);
         assert_eq!(data.human_readable_size(), "500 B");
     }
 
     #[test]
     fn human_readable_size_kb() {
-        let data = AudioData::new(vec![0u8; 2048], AudioMimeType::Ogg);
+        let data = AudioData::new(vec![0u8; 2048], AudioMimeType::Flac);
         assert_eq!(data.human_readable_size(), "2.0 KB");
     }
 
     #[test]
     fn human_readable_size_mb() {
-        let data = AudioData::new(vec![0u8; 2 * 1024 * 1024], AudioMimeType::Ogg);
+        let data = AudioData::new(vec![0u8; 2 * 1024 * 1024], AudioMimeType::Flac);
         assert_eq!(data.human_readable_size(), "2.0 MB");
     }
 
     #[test]
     fn to_base64() {
-        let data = AudioData::new(vec![1, 2, 3, 4], AudioMimeType::Ogg);
+        let data = AudioData::new(vec![1, 2, 3, 4], AudioMimeType::Flac);
         let b64 = data.to_base64();
         assert!(!b64.is_empty());
         // Verify it's valid base64 by decoding
@@ -173,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn default_mime_type_is_ogg() {
-        assert_eq!(AudioMimeType::default(), AudioMimeType::Ogg);
+    fn default_mime_type_is_flac() {
+        assert_eq!(AudioMimeType::default(), AudioMimeType::Flac);
     }
 }

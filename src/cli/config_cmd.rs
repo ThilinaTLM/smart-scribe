@@ -78,6 +78,13 @@ async fn handle_set<S: ConfigStore>(
                 message: "Value must be 'true' or 'false'".to_string(),
             })?)
         }
+        "audio_cue" => {
+            config.audio_cue =
+                Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: "Value must be 'true' or 'false'".to_string(),
+                })?)
+        }
         "linux.keystroke_tool" => {
             // Initialize linux config if None
             if config.linux.is_none() {
@@ -140,6 +147,7 @@ async fn handle_get<S: ConfigStore>(
         "clipboard" => config.clipboard.map(|b| b.to_string()),
         "keystroke" => config.keystroke.map(|b| b.to_string()),
         "notify" => config.notify.map(|b| b.to_string()),
+        "audio_cue" => config.audio_cue.map(|b| b.to_string()),
         "linux.keystroke_tool" => config.linux.as_ref().and_then(|l| l.keystroke_tool.clone()),
         "linux.indicator" => config
             .linux
@@ -202,6 +210,13 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
             .unwrap_or_else(|| "(not set)".to_string()),
     );
     presenter.key_value(
+        "audio_cue",
+        &config
+            .audio_cue
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "(not set)".to_string()),
+    );
+    presenter.key_value(
         "linux.keystroke_tool",
         config
             .linux
@@ -254,7 +269,7 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                     message: e.to_string(),
                 })?;
         }
-        "clipboard" | "keystroke" | "notify" => {
+        "clipboard" | "keystroke" | "notify" | "audio_cue" => {
             parse_bool(value).map_err(|_| ConfigError::ValidationError {
                 key: key.to_string(),
                 message: "Value must be 'true' or 'false'".to_string(),

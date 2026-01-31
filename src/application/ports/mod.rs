@@ -3,6 +3,7 @@
 //! These traits define the boundaries between the application
 //! and infrastructure layers.
 
+pub mod audio_cue;
 pub mod clipboard;
 pub mod config;
 pub mod keystroke;
@@ -11,6 +12,7 @@ pub mod recorder;
 pub mod transcriber;
 
 // Re-export common types
+pub use audio_cue::{AudioCue, AudioCueError, AudioCueType};
 pub use clipboard::{Clipboard, ClipboardError};
 pub use config::ConfigStore;
 pub use keystroke::{Keystroke, KeystrokeError};

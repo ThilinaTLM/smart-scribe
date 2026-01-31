@@ -4,12 +4,12 @@ use std::env;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use crate::application::ports::ConfigStore;
+use crate::application::ports::{AudioCueType, ConfigStore};
 use crate::application::{TranscribeCallbacks, TranscribeInput, TranscribeRecordingUseCase};
 use crate::domain::config::AppConfig;
 use crate::infrastructure::{
-    create_clipboard, create_keystroke, create_notifier, create_recorder, GeminiTranscriber,
-    KeystrokeToolPreference, NoOpKeystroke, XdgConfigStore,
+    create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
+    GeminiTranscriber, KeystrokeToolPreference, NoOpKeystroke, XdgConfigStore,
 };
 
 use super::args::TranscribeOptions;
@@ -73,6 +73,9 @@ pub async fn run_oneshot(options: TranscribeOptions) -> ExitCode {
     let use_case =
         TranscribeRecordingUseCase::new(recorder, transcriber, clipboard, keystroke, notifier);
 
+    // Create audio cue adapter
+    let audio_cue = Arc::new(create_audio_cue(options.audio_cue));
+
     // Create input
     let input = TranscribeInput {
         duration: options.duration,
@@ -87,11 +90,25 @@ pub async fn run_oneshot(options: TranscribeOptions) -> ExitCode {
         on_progress: Some(Arc::new(move |_elapsed, _total| {
             // Progress handled by spinner
         })),
-        on_recording_start: Some(Box::new(|| {
-            eprintln!("⠋ Recording...");
+        on_recording_start: Some(Box::new({
+            let cue = Arc::clone(&audio_cue);
+            move || {
+                eprintln!("⠋ Recording...");
+                let cue = Arc::clone(&cue);
+                tokio::spawn(async move {
+                    let _ = cue.play(AudioCueType::RecordingStart).await;
+                });
+            }
         })),
-        on_recording_end: Some(Box::new(|size: &str| {
-            eprintln!("✓ Recording complete ({})", size);
+        on_recording_end: Some(Box::new({
+            let cue = Arc::clone(&audio_cue);
+            move |size: &str| {
+                eprintln!("✓ Recording complete ({})", size);
+                let cue = Arc::clone(&cue);
+                tokio::spawn(async move {
+                    let _ = cue.play(AudioCueType::RecordingStop).await;
+                });
+            }
         })),
         on_transcribing_start: Some(Box::new(|| {
             eprintln!("⠋ Transcribing...");
