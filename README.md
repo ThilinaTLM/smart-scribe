@@ -13,7 +13,9 @@
 
 AI-powered voice-to-text for Linux, macOS, and Windows. Record from your microphone and get accurate, context-aware transcriptions using Google Gemini.
 
-![SmartScribe Demo](assets/demo.gif)
+<p align="center">
+  <img src="assets/demo-claude-code.gif" alt="SmartScribe with Claude Code" width="720">
+</p>
 
 ## Install
 
