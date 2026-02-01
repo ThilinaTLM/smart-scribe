@@ -13,6 +13,8 @@
 
 AI-powered voice-to-text for Linux, macOS, and Windows. Record from your microphone and get accurate, context-aware transcriptions using Google Gemini.
 
+![SmartScribe Demo](assets/demo.gif)
+
 ## Install
 
 **Linux / macOS:**
@@ -211,11 +213,11 @@ sudo cp target/release/smart-scribe /usr/local/bin/
 <details>
 <summary><strong>Build Dependencies</strong></summary>
 
-| Platform | Dependencies                                                            |
-| -------- | ----------------------------------------------------------------------- |
-| Linux    | `libasound2-dev`, `libxdo-dev`, `libxkbcommon-dev`, `libwayland-dev`    |
-| macOS    | None                                                                    |
-| Windows  | None                                                                    |
+| Platform | Dependencies                                                         |
+| -------- | -------------------------------------------------------------------- |
+| Linux    | `libasound2-dev`, `libxdo-dev`, `libxkbcommon-dev`, `libwayland-dev` |
+| macOS    | None                                                                 |
+| Windows  | None                                                                 |
 
 </details>
 
