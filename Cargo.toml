@@ -48,7 +48,7 @@ flacenc = "0.4"
 
 # Cross-platform adapters
 arboard = "3"
-enigo = "0.2"
+enigo = { version = "0.2", default-features = false, features = ["x11rb"] }
 notify-rust = "4"
 
 # Resampling for audio
