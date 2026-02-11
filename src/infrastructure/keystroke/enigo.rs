@@ -80,9 +80,9 @@ impl Keystroke for EnigoKeystroke {
 
             #[cfg(not(target_os = "linux"))]
             {
-                enigo.text(&text).map_err(|e| {
-                    KeystrokeError::TypeFailed(format!("Failed to type text: {}", e))
-                })
+                enigo
+                    .text(&text)
+                    .map_err(|e| KeystrokeError::TypeFailed(format!("Failed to type text: {}", e)))
             }
         })
         .await
