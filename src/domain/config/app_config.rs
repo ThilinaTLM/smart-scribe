@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn keystroke_tool_or_default_returns_enigo() {
+    fn keystroke_tool_or_default_returns_platform_default() {
         let config = AppConfig::empty();
         assert_eq!(config.keystroke_tool_or_default(), "enigo");
     }
