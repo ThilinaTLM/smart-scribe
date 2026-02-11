@@ -29,7 +29,7 @@ impl Default for XdotoolKeystroke {
 impl Keystroke for XdotoolKeystroke {
     async fn type_text(&self, text: &str) -> Result<(), KeystrokeError> {
         let status = Command::new("xdotool")
-            .args(["type", "--", text])
+            .args(["type", "--delay", "2", "--", text])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

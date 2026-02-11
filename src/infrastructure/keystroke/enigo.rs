@@ -35,9 +35,55 @@ impl Keystroke for EnigoKeystroke {
                 KeystrokeError::TypeFailed(format!("Failed to create enigo: {}", e))
             })?;
 
-            enigo
-                .text(&text)
-                .map_err(|e| KeystrokeError::TypeFailed(format!("Failed to type text: {}", e)))
+            // On Linux, enigo sends events via XWayland which drops keystrokes.
+            // Type character-by-character with delays to prevent dropped input.
+            #[cfg(target_os = "linux")]
+            {
+                use enigo::{Direction, Key};
+                use std::thread;
+                use std::time::Duration;
+
+                // Initial delay lets XWayland focus settle
+                thread::sleep(Duration::from_millis(50));
+
+                for ch in text.chars() {
+                    if ch.is_uppercase() {
+                        // Workaround for enigo x11rb bug: keysym_to_keycode() only
+                        // searches level 0 of the keymap (lowercase). Uppercase keysyms
+                        // live at level 1 (Shift) so they're never found, and the
+                        // fallback dynamic binding fails on XWayland — silently dropping
+                        // the character. Instead, hold Shift and type the lowercase
+                        // equivalent whose keycode IS found at level 0.
+                        let lowercase = ch.to_lowercase().next().unwrap_or(ch);
+                        enigo.key(Key::Shift, Direction::Press).map_err(|e| {
+                            KeystrokeError::TypeFailed(format!("Failed to press Shift: {}", e))
+                        })?;
+                        enigo
+                            .key(Key::Unicode(lowercase), Direction::Click)
+                            .map_err(|e| {
+                                KeystrokeError::TypeFailed(format!("Failed to type char: {}", e))
+                            })?;
+                        enigo.key(Key::Shift, Direction::Release).map_err(|e| {
+                            KeystrokeError::TypeFailed(format!("Failed to release Shift: {}", e))
+                        })?;
+                    } else {
+                        let s = ch.to_string();
+                        enigo.text(&s).map_err(|e| {
+                            KeystrokeError::TypeFailed(format!("Failed to type text: {}", e))
+                        })?;
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+
+                Ok(())
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                enigo.text(&text).map_err(|e| {
+                    KeystrokeError::TypeFailed(format!("Failed to type text: {}", e))
+                })
+            }
         })
         .await
         .map_err(|e| KeystrokeError::TypeFailed(format!("Task join error: {}", e)))?
