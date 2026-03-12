@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SmartScribe is a **cross-platform** Rust CLI tool for AI-powered audio transcription using Google Gemini. It records from the microphone and outputs context-aware text to stdout. Supports Windows, macOS, and Linux.
+SmartScribe is a **cross-platform** Rust CLI tool for AI-powered audio transcription with multiple backend support (Google Gemini and ChatGPT). It records from the microphone and outputs text to stdout. Supports Windows, macOS, and Linux.
 
 **Modes:**
 - **One-shot** - Fixed duration recording, immediate transcription
@@ -27,17 +27,23 @@ cargo run -- --daemon    # Daemon mode
 
 ## Environment Setup
 
+**Gemini (default):**
 ```bash
-# Option 1: Config command
 smart-scribe config set api_key YOUR_API_KEY
-
-# Option 2: Environment variable
-export GEMINI_API_KEY=your_api_key_here
-
-# Option 3: Config file
-# Linux/macOS: ~/.config/smart-scribe/config.toml
-# Windows: %APPDATA%\smart-scribe\config.toml
+# or: export GEMINI_API_KEY=your_api_key_here
 ```
+
+**ChatGPT:**
+```bash
+smart-scribe config set backend chatgpt
+# Place cookies at ~/.config/smart-scribe/chatgpt-cookies.json
+# or: smart-scribe config set chatgpt_cookie_file /path/to/cookies.json
+# or: export CHATGPT_COOKIE_FILE=/path/to/cookies.json
+```
+
+Config file location:
+- Linux/macOS: `~/.config/smart-scribe/config.toml`
+- Windows: `%APPDATA%\smart-scribe\config.toml`
 
 Config priority: CLI args > environment > config.toml > defaults
 
@@ -71,14 +77,16 @@ smart-scribe config path
 ```
 
 **Options:**
+- `--backend <BACKEND>` - Transcription backend (gemini|chatgpt, default: gemini)
 - `-d, --duration <TIME>` - Recording duration (10s, 1m, 2m30s)
-- `-D, --domain <DOMAIN>` - Domain preset (general|dev|medical|legal|finance)
+- `-D, --domain <DOMAIN>` - Domain preset, Gemini only (general|dev|medical|legal|finance)
 - `-c, --clipboard` - Copy result to clipboard
 - `-k, --keystroke` - Type result into focused window
 - `-n, --notify` - Show desktop notification
 - `-a, --audio-cue` - Play audio cues on recording events
 - `--daemon` - Run as daemon
 - `--max-duration <TIME>` - Safety limit for daemon mode (default: 60s)
+- `--chatgpt-cookie-file <PATH>` - Path to ChatGPT cookie file
 - `--keystroke-tool <TOOL>` - Linux only: enigo|auto|ydotool|xdotool|wtype
 - `--indicator` - Linux only: show recording indicator (Wayland)
 - `--indicator-position <POS>` - Position: top-left|top-center|top-right|bottom-*
@@ -104,7 +112,7 @@ src/
 | Port | Cross-Platform Adapter | Platform-Specific |
 |------|----------------------|-------------------|
 | `AudioRecorder` | `CpalRecorder` (cpal) | - |
-| `Transcriber` | `GeminiTranscriber` | - |
+| `Transcriber` | `GeminiTranscriber`, `ChatGptTranscriber` | - |
 | `Clipboard` | `ArboardClipboard` (arboard) | `WaylandClipboard` (wl-copy) |
 | `Keystroke` | `EnigoKeystroke` (enigo) | `Xdotool`, `Wtype`, `Ydotool` (Linux) |
 | `Notifier` | `NotifyRustNotifier` (notify-rust) | `NotifySendNotifier` |
@@ -116,7 +124,7 @@ src/
 - `Duration` - Parses time strings (30s, 1m, 2m30s)
 - `DomainId` - Domain-specific prompt configuration
 - `SystemPrompt` - Builds full transcription prompt from domain
-- `AudioData` - Holds audio bytes with MIME type
+- `AudioData` - Holds audio bytes with MIME type and optional duration
 - `AppConfig` - Configuration with merge support
 
 **Entities:**
@@ -160,7 +168,8 @@ src/
 - `notify-rust` - Desktop notifications
 - `dirs` - Platform-aware directories
 - `tokio` - Async runtime
-- `reqwest` - HTTP client for Gemini API
+- `reqwest` - HTTP client for API backends
+- `uuid` - UUID generation (ChatGPT device ID)
 - `clap` - CLI parsing
 - `serde` / `toml` - Config
 
@@ -173,9 +182,11 @@ src/
 
 ```toml
 api_key = "your-api-key"
+backend = "gemini"              # "gemini" or "chatgpt"
+chatgpt_cookie_file = ""        # Path to ChatGPT cookies JSON (optional)
 duration = "10s"
 max_duration = "60s"
-domain = "general"
+domain = "general"              # Gemini only
 clipboard = false
 keystroke = false
 notify = false
@@ -196,8 +207,16 @@ cargo test --test cli_tests          # CLI integration tests
 cargo test --test transcription_tests -- --ignored  # API tests (needs key)
 ```
 
-## Gemini API
+## Transcription Backends
 
+### Gemini (default)
 - Model: `gemini-2.0-flash-lite`
+- Auth: API key (`GEMINI_API_KEY` env or config)
 - Audio sent as base64 FLAC (lossless)
-- Domain-specific system prompts for context-aware transcription
+- Supports domain-specific system prompts (`-D`) for context-aware transcription
+
+### ChatGPT
+- Uses `/backend-api/transcribe` endpoint
+- Auth: Browser cookies exported as JSON
+- Audio sent as multipart FLAC upload
+- Simple audio-in, text-out (no domain prompt support)

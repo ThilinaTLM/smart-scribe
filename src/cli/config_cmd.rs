@@ -5,7 +5,9 @@ use crate::domain::config::LinuxConfig;
 use crate::domain::error::ConfigError;
 use crate::domain::transcription::DomainId;
 
-use super::args::{is_valid_config_key, ConfigAction, VALID_CONFIG_KEYS, VALID_KEYSTROKE_TOOLS};
+use super::args::{
+    is_valid_config_key, ConfigAction, VALID_BACKENDS, VALID_CONFIG_KEYS, VALID_KEYSTROKE_TOOLS,
+};
 use super::presenter::Presenter;
 
 /// Handle config subcommand
@@ -55,6 +57,8 @@ async fn handle_set<S: ConfigStore>(
     // Update the appropriate field
     match key {
         "api_key" => config.api_key = Some(value.to_string()),
+        "backend" => config.backend = Some(value.to_string()),
+        "chatgpt_cookie_file" => config.chatgpt_cookie_file = Some(value.to_string()),
         "duration" => config.duration = Some(value.to_string()),
         "max_duration" => config.max_duration = Some(value.to_string()),
         "domain" => config.domain = Some(value.to_string()),
@@ -141,6 +145,8 @@ async fn handle_get<S: ConfigStore>(
 
     let value = match key {
         "api_key" => config.api_key.map(|s| mask_api_key(&s)),
+        "backend" => config.backend,
+        "chatgpt_cookie_file" => config.chatgpt_cookie_file,
         "duration" => config.duration,
         "max_duration" => config.max_duration,
         "domain" => config.domain,
@@ -178,6 +184,11 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
             .api_key
             .map(|s| mask_api_key(&s))
             .unwrap_or_else(|| "(not set)".to_string()),
+    );
+    presenter.key_value("backend", config.backend.as_deref().unwrap_or("(not set)"));
+    presenter.key_value(
+        "chatgpt_cookie_file",
+        config.chatgpt_cookie_file.as_deref().unwrap_or("(not set)"),
     );
     presenter.key_value(
         "duration",
@@ -261,6 +272,19 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                     message: e.to_string(),
                 })?;
         }
+        "backend" => {
+            let lower = value.to_lowercase();
+            if !VALID_BACKENDS.contains(&lower.as_str()) {
+                return Err(ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: format!(
+                        "Invalid value '{}'. Valid options: {}",
+                        value,
+                        VALID_BACKENDS.join(", ")
+                    ),
+                });
+            }
+        }
         "domain" => {
             value
                 .parse::<DomainId>()
@@ -310,7 +334,7 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                 });
             }
         }
-        _ => {} // api_key accepts any string
+        _ => {} // api_key, chatgpt_cookie_file accept any string
     }
     Ok(())
 }

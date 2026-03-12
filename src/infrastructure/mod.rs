@@ -21,4 +21,4 @@ pub use keystroke::{
 };
 pub use notification::{create_notifier, NotifyRustNotifier, NotifySendNotifier};
 pub use recording::{create_recorder, CpalRecorder};
-pub use transcription::GeminiTranscriber;
+pub use transcription::{ChatGptTranscriber, GeminiTranscriber};

@@ -68,6 +68,8 @@ async fn main() -> ExitCode {
 
         AppConfig {
             api_key: None, // API key comes from env/file only
+            backend: cli.backend.map(|b| b.to_string()),
+            chatgpt_cookie_file: cli.chatgpt_cookie_file.clone(),
             duration: cli.duration.clone(),
             max_duration: cli.max_duration.clone(),
             domain: cli
@@ -84,6 +86,8 @@ async fn main() -> ExitCode {
     #[cfg(not(target_os = "linux"))]
     let cli_config = AppConfig {
         api_key: None, // API key comes from env/file only
+        backend: cli.backend.map(|b| b.to_string()),
+        chatgpt_cookie_file: cli.chatgpt_cookie_file.clone(),
         duration: cli.duration.clone(),
         max_duration: cli.max_duration.clone(),
         domain: cli
@@ -98,6 +102,11 @@ async fn main() -> ExitCode {
 
     // Merge config
     let config = load_merged_config(cli_config).await;
+
+    // Warn if domain preset used with chatgpt backend
+    if cli.domain.is_some() && config.backend_or_default() == "chatgpt" {
+        eprintln!("Warning: Domain presets (-D) are not supported with the ChatGPT backend and will be ignored");
+    }
 
     // Route to appropriate handler
     if cli.daemon {
@@ -133,7 +142,7 @@ async fn main() -> ExitCode {
             indicator_position,
         };
 
-        run_daemon(options).await
+        run_daemon(options, &config).await
     } else {
         // Parse duration
         let duration = match config.duration.as_ref() {
@@ -157,6 +166,6 @@ async fn main() -> ExitCode {
             audio_cue: config.audio_cue_or_default(),
         };
 
-        run_oneshot(options).await
+        run_oneshot(options, &config).await
     }
 }

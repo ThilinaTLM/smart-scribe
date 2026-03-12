@@ -9,13 +9,14 @@ use tokio::time::timeout;
 
 use crate::application::ports::{AudioCue, AudioCueType};
 use crate::application::{DaemonConfig, DaemonTranscriptionUseCase};
+use crate::domain::config::AppConfig;
 use crate::domain::daemon::{DaemonState, StateUpdate};
 use crate::infrastructure::{
     create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
-    GeminiTranscriber, KeystrokeToolPreference, NoOpKeystroke,
+    KeystrokeToolPreference, NoOpKeystroke,
 };
 
-use super::app::{get_api_key, EXIT_ERROR, EXIT_SUCCESS};
+use super::app::{create_transcriber, EXIT_ERROR, EXIT_SUCCESS};
 use super::args::DaemonOptions;
 use super::ipc::create_ipc_server;
 use super::pid_file::{PidFile, PidFileError};
@@ -36,7 +37,7 @@ struct DaemonLoopContext<'a> {
 }
 
 /// Run daemon mode
-pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
+pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode {
     let presenter = Presenter::new();
 
     // Acquire PID file
@@ -53,9 +54,9 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
         return ExitCode::from(EXIT_ERROR);
     }
 
-    // Load API key
-    let api_key = match get_api_key().await {
-        Ok(key) => key,
+    // Create transcriber from config
+    let transcriber = match create_transcriber(config) {
+        Ok(t) => t,
         Err(e) => {
             presenter.error(&e);
             return ExitCode::from(EXIT_ERROR);
@@ -64,7 +65,6 @@ pub async fn run_daemon(options: DaemonOptions) -> ExitCode {
 
     // Create adapters (using cross-platform implementations)
     let recorder = create_recorder();
-    let transcriber = GeminiTranscriber::new(api_key);
     let clipboard = create_clipboard();
     let notifier = create_notifier();
 

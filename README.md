@@ -11,7 +11,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-AI-powered voice-to-text for Linux, macOS, and Windows. Record from your microphone and get accurate, context-aware transcriptions using Google Gemini.
+AI-powered voice-to-text for Linux, macOS, and Windows. Record from your microphone and get accurate transcriptions using Google Gemini or ChatGPT.
 
 <p align="center">
   <img src="assets/demo-claude-code.gif" alt="SmartScribe with Claude Code" width="720">
@@ -35,6 +35,8 @@ The install scripts automatically detect fresh installs, updates, and reinstalls
 
 ## Quick Start
 
+### Gemini (default)
+
 1. **Get an API key** from [Google AI Studio](https://aistudio.google.com/apikey)
 
 2. **Configure:**
@@ -50,10 +52,35 @@ The install scripts automatically detect fresh installs, updates, and reinstalls
    smart-scribe -d 1m -c     # 1 minute, copy to clipboard
    ```
 
+### ChatGPT
+
+1. **Export cookies** from your browser while logged into [chatgpt.com](https://chatgpt.com) (use a browser extension like "Cookie-Editor" to export as JSON)
+
+2. **Save the cookie file:**
+
+   ```bash
+   # Default location (auto-detected):
+   # Linux/macOS: ~/.config/smart-scribe/chatgpt-cookies.json
+   # Windows: %APPDATA%\smart-scribe\chatgpt-cookies.json
+
+   # Or specify a custom path:
+   smart-scribe config set chatgpt_cookie_file /path/to/cookies.json
+   ```
+
+3. **Set the backend and transcribe:**
+   ```bash
+   smart-scribe config set backend chatgpt
+   smart-scribe -d 10s
+
+   # Or use per-invocation:
+   smart-scribe --backend chatgpt -d 10s
+   ```
+
 ## Features
 
-- **Voice-to-text** - Record audio and transcribe with Google Gemini
-- **Domain presets** - Optimized for dev, medical, legal, finance contexts
+- **Voice-to-text** - Record audio and transcribe with multiple AI backends
+- **Multiple backends** - Google Gemini (API key) or ChatGPT (browser cookies)
+- **Domain presets** - Optimized for dev, medical, legal, finance contexts (Gemini only)
 - **Clipboard integration** - Copy transcriptions directly (`-c`)
 - **Keystroke output** - Type into focused window (`-k`)
 - **Desktop notifications** - Get notified when done (`-n`)
@@ -103,7 +130,9 @@ smart-scribe daemon status       # Show state (idle/recording/processing)
 
 Bind `smart-scribe daemon toggle` to a hotkey for push-to-talk.
 
-### Domain Presets
+### Domain Presets (Gemini only)
+
+Domain presets provide context-aware transcription by sending domain-specific system prompts to Gemini. These are ignored when using the ChatGPT backend.
 
 | Domain    | Use Case                                           |
 | --------- | -------------------------------------------------- |
@@ -122,8 +151,9 @@ smart-scribe -D medical    # Medical terminology
 
 ```bash
 smart-scribe config init              # Create config with defaults
-smart-scribe config set api_key KEY   # Set API key
-smart-scribe config set domain dev    # Set default domain
+smart-scribe config set api_key KEY   # Set Gemini API key
+smart-scribe config set backend chatgpt  # Switch to ChatGPT backend
+smart-scribe config set domain dev    # Set default domain (Gemini only)
 smart-scribe config list              # Show all settings
 smart-scribe config path              # Show config file location
 ```
@@ -134,17 +164,19 @@ smart-scribe config path              # Show config file location
 
 ### CLI Options
 
-| Option                    | Description                         | Default |
-| ------------------------- | ----------------------------------- | ------- |
-| `-d, --duration <TIME>`   | Recording duration (10s, 1m, 2m30s) | 10s     |
-| `-D, --domain <DOMAIN>`   | Domain preset                       | general |
-| `-c, --clipboard`         | Copy to clipboard                   | off     |
-| `-k, --keystroke`         | Type into focused window            | off     |
-| `--keystroke-tool <TOOL>` | Keystroke tool (Linux only)         | enigo   |
-| `-n, --notify`            | Desktop notifications               | off     |
-| `-a, --audio-cue`         | Play audio cues on recording events | off     |
-| `--daemon`                | Run in daemon mode                  | off     |
-| `--max-duration <TIME>`   | Max recording (daemon safety limit) | 60s     |
+| Option                          | Description                          | Default |
+| ------------------------------- | ------------------------------------ | ------- |
+| `--backend <BACKEND>`           | Transcription backend (gemini, chatgpt) | gemini  |
+| `-d, --duration <TIME>`         | Recording duration (10s, 1m, 2m30s)  | 10s     |
+| `-D, --domain <DOMAIN>`         | Domain preset (Gemini only)          | general |
+| `-c, --clipboard`               | Copy to clipboard                    | off     |
+| `-k, --keystroke`               | Type into focused window             | off     |
+| `--keystroke-tool <TOOL>`       | Keystroke tool (Linux only)          | enigo   |
+| `-n, --notify`                  | Desktop notifications                | off     |
+| `-a, --audio-cue`               | Play audio cues on recording events  | off     |
+| `--daemon`                      | Run in daemon mode                   | off     |
+| `--max-duration <TIME>`         | Max recording (daemon safety limit)  | 60s     |
+| `--chatgpt-cookie-file <PATH>`  | Path to ChatGPT cookie file          | auto    |
 
 <details>
 <summary><strong>Platform Notes</strong></summary>

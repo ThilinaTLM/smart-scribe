@@ -2,8 +2,8 @@
 name = "smart-scribe"
 version = "0.0.0-dev"
 edition = "2021"
-description = "AI-powered audio transcription CLI using Google Gemini"
-authors = ["SmartScribe Contributors"]
+description = "AI-powered audio transcription CLI with multiple backend support"
+authors = ["ThilinaTLM"]
 license = "MIT"
 repository = "https://github.com/yourusername/smart-scribe"
 keywords = ["transcription", "audio", "ai", "gemini", "cli"]
@@ -14,7 +14,7 @@ categories = ["command-line-utilities", "multimedia::audio"]
 tokio = { version = "1", features = ["full", "signal"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 
 # CLI parsing
 clap = { version = "4", features = ["derive", "env"] }
@@ -36,6 +36,9 @@ async-trait = "0.1"
 
 # Base64 encoding for audio
 base64 = "0.22"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
 
 # Directory paths
 dirs = "5"

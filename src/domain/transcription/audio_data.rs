@@ -51,12 +51,17 @@ impl fmt::Display for AudioMimeType {
 pub struct AudioData {
     data: Vec<u8>,
     mime_type: AudioMimeType,
+    duration_ms: Option<u64>,
 }
 
 impl AudioData {
     /// Create AudioData from raw bytes
     pub fn new(data: Vec<u8>, mime_type: AudioMimeType) -> Self {
-        Self { data, mime_type }
+        Self {
+            data,
+            mime_type,
+            duration_ms: None,
+        }
     }
 
     /// Create AudioData from a byte slice
@@ -64,7 +69,19 @@ impl AudioData {
         Self {
             data: data.to_vec(),
             mime_type,
+            duration_ms: None,
         }
+    }
+
+    /// Set the duration in milliseconds
+    pub fn with_duration_ms(mut self, duration_ms: u64) -> Self {
+        self.duration_ms = Some(duration_ms);
+        self
+    }
+
+    /// Get the duration in milliseconds, if known
+    pub fn duration_ms(&self) -> Option<u64> {
+        self.duration_ms
     }
 
     /// Get the raw audio data

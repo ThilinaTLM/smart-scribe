@@ -19,7 +19,9 @@ pub mod socket;
 pub use app::{run_oneshot, EXIT_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR};
 #[cfg(target_os = "linux")]
 pub use args::IndicatorPosition;
-pub use args::{Cli, Commands, ConfigAction, DaemonAction, DaemonOptions, TranscribeOptions};
+pub use args::{
+    BackendArg, Cli, Commands, ConfigAction, DaemonAction, DaemonOptions, TranscribeOptions,
+};
 pub use daemon_app::run_daemon;
 pub use daemon_cmd::handle_daemon_command;
 pub use presenter::Presenter;

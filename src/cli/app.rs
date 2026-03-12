@@ -4,17 +4,65 @@ use std::env;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use crate::application::ports::{AudioCueType, ConfigStore};
+use async_trait::async_trait;
+
+use crate::application::ports::{AudioCueType, ConfigStore, Transcriber, TranscriptionError};
 use crate::application::{TranscribeCallbacks, TranscribeInput, TranscribeRecordingUseCase};
 use crate::domain::config::AppConfig;
+use crate::domain::transcription::{AudioData, SystemPrompt};
 use crate::infrastructure::{
     create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
-    GeminiTranscriber, KeystrokeToolPreference, NoOpKeystroke, XdgConfigStore,
+    ChatGptTranscriber, GeminiTranscriber, KeystrokeToolPreference, NoOpKeystroke, XdgConfigStore,
 };
 
 use super::args::TranscribeOptions;
 use super::presenter::Presenter;
 use super::signals::ShutdownSignal;
+
+/// Enum wrapper for dynamic backend dispatch
+pub enum AnyTranscriber {
+    Gemini(GeminiTranscriber),
+    ChatGpt(ChatGptTranscriber),
+}
+
+#[async_trait]
+impl Transcriber for AnyTranscriber {
+    async fn transcribe(
+        &self,
+        audio: &AudioData,
+        prompt: &SystemPrompt,
+    ) -> Result<String, TranscriptionError> {
+        match self {
+            AnyTranscriber::Gemini(t) => t.transcribe(audio, prompt).await,
+            AnyTranscriber::ChatGpt(t) => t.transcribe(audio, prompt).await,
+        }
+    }
+}
+
+/// Create a transcriber based on the merged config
+pub fn create_transcriber(config: &AppConfig) -> Result<AnyTranscriber, String> {
+    match config.backend_or_default() {
+        "chatgpt" => {
+            let cookie_file = config.chatgpt_cookie_file_or_default();
+            if !cookie_file.exists() {
+                return Err(format!(
+                    "ChatGPT cookie file not found: {}\nExport cookies from your browser to this file.",
+                    cookie_file.display()
+                ));
+            }
+            Ok(AnyTranscriber::ChatGpt(ChatGptTranscriber::new(
+                cookie_file,
+            )))
+        }
+        _ => {
+            // Gemini (default)
+            let api_key = config.api_key.as_ref().ok_or_else(|| {
+                "Missing API key. Set GEMINI_API_KEY environment variable or run 'smart-scribe config set api_key <key>'".to_string()
+            })?;
+            Ok(AnyTranscriber::Gemini(GeminiTranscriber::new(api_key)))
+        }
+    }
+}
 
 /// Exit codes
 pub const EXIT_SUCCESS: u8 = 0;
@@ -22,12 +70,12 @@ pub const EXIT_ERROR: u8 = 1;
 pub const EXIT_USAGE_ERROR: u8 = 2;
 
 /// Run the one-shot transcription
-pub async fn run_oneshot(options: TranscribeOptions) -> ExitCode {
+pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> ExitCode {
     let presenter = Presenter::new();
 
-    // Load API key from config or environment
-    let api_key = match get_api_key().await {
-        Ok(key) => key,
+    // Create transcriber from merged config
+    let transcriber = match create_transcriber(config) {
+        Ok(t) => t,
         Err(e) => {
             presenter.error(&e);
             return ExitCode::from(EXIT_ERROR);
@@ -43,7 +91,6 @@ pub async fn run_oneshot(options: TranscribeOptions) -> ExitCode {
 
     // Create adapters (using cross-platform implementations)
     let recorder = create_recorder();
-    let transcriber = GeminiTranscriber::new(api_key);
     let clipboard = create_clipboard();
     let notifier = create_notifier();
 
@@ -167,6 +214,9 @@ pub async fn load_merged_config(cli_config: AppConfig) -> AppConfig {
     // Build env config
     let env_config = AppConfig {
         api_key: env::var("GEMINI_API_KEY").ok().filter(|s| !s.is_empty()),
+        chatgpt_cookie_file: env::var("CHATGPT_COOKIE_FILE")
+            .ok()
+            .filter(|s| !s.is_empty()),
         ..Default::default()
     };
 

@@ -1,5 +1,7 @@
 //! Application configuration value object
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::recording::Duration;
@@ -18,6 +20,8 @@ pub struct LinuxConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub api_key: Option<String>,
+    pub backend: Option<String>,
+    pub chatgpt_cookie_file: Option<String>,
     pub duration: Option<String>,
     pub max_duration: Option<String>,
     pub domain: Option<String>,
@@ -33,6 +37,8 @@ impl AppConfig {
     pub fn defaults() -> Self {
         Self {
             api_key: None,
+            backend: Some("gemini".to_string()),
+            chatgpt_cookie_file: None,
             duration: Some("10s".to_string()),
             max_duration: Some("60s".to_string()),
             domain: Some("general".to_string()),
@@ -58,6 +64,8 @@ impl AppConfig {
     pub fn merge(self, other: Self) -> Self {
         Self {
             api_key: other.api_key.or(self.api_key),
+            backend: other.backend.or(self.backend),
+            chatgpt_cookie_file: other.chatgpt_cookie_file.or(self.chatgpt_cookie_file),
             duration: other.duration.or(self.duration),
             max_duration: other.max_duration.or(self.max_duration),
             domain: other.domain.or(self.domain),
@@ -83,6 +91,23 @@ impl AppConfig {
                 indicator: o.indicator.or(b.indicator),
                 indicator_position: o.indicator_position.or(b.indicator_position),
             }),
+        }
+    }
+
+    /// Get backend, or "gemini" if not set
+    pub fn backend_or_default(&self) -> &str {
+        self.backend.as_deref().unwrap_or("gemini")
+    }
+
+    /// Get ChatGPT cookie file path, or default platform config path
+    pub fn chatgpt_cookie_file_or_default(&self) -> PathBuf {
+        if let Some(ref path) = self.chatgpt_cookie_file {
+            PathBuf::from(path)
+        } else {
+            dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("smart-scribe")
+                .join("chatgpt-cookies.json")
         }
     }
 

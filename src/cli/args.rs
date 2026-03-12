@@ -9,7 +9,7 @@ use crate::domain::transcription::DomainId;
 #[derive(Parser, Debug)]
 #[command(name = "smart-scribe")]
 #[command(version)]
-#[command(about = "AI-powered voice to text transcription using Google Gemini")]
+#[command(about = "AI-powered voice to text transcription")]
 #[command(long_about = None)]
 pub struct Cli {
     /// Recording duration (e.g., 10s, 1m, 2m30s)
@@ -39,6 +39,14 @@ pub struct Cli {
     /// Play audio cues on recording events
     #[arg(short = 'a', long)]
     pub audio_cue: bool,
+
+    /// Transcription backend to use
+    #[arg(long, value_name = "BACKEND")]
+    pub backend: Option<BackendArg>,
+
+    /// Path to ChatGPT cookie file (for chatgpt backend)
+    #[arg(long, value_name = "PATH")]
+    pub chatgpt_cookie_file: Option<String>,
 
     /// Run as daemon (control via: smart-scribe daemon toggle/cancel/status)
     #[arg(long)]
@@ -110,6 +118,22 @@ pub enum ConfigAction {
     List,
     /// Show config file path
     Path,
+}
+
+/// Backend argument for clap ValueEnum
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum BackendArg {
+    Gemini,
+    Chatgpt,
+}
+
+impl std::fmt::Display for BackendArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackendArg::Gemini => write!(f, "gemini"),
+            BackendArg::Chatgpt => write!(f, "chatgpt"),
+        }
+    }
 }
 
 /// Domain argument for clap ValueEnum
@@ -210,10 +234,15 @@ pub struct DaemonOptions {
     pub indicator_position: IndicatorPosition,
 }
 
+/// Valid backend values
+pub const VALID_BACKENDS: &[&str] = &["gemini", "chatgpt"];
+
 /// Valid config keys (Linux includes indicator settings)
 #[cfg(target_os = "linux")]
 pub const VALID_CONFIG_KEYS: &[&str] = &[
     "api_key",
+    "backend",
+    "chatgpt_cookie_file",
     "duration",
     "max_duration",
     "domain",
@@ -230,6 +259,8 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
 #[cfg(not(target_os = "linux"))]
 pub const VALID_CONFIG_KEYS: &[&str] = &[
     "api_key",
+    "backend",
+    "chatgpt_cookie_file",
     "duration",
     "max_duration",
     "domain",
