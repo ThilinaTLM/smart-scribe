@@ -93,14 +93,24 @@ impl IpcServer for NamedPipeServer {
         let state_fn = Arc::new(state_fn);
         let elapsed_fn = Arc::new(elapsed_fn);
 
+        // Create the first pipe instance before entering the loop so that
+        // a client can connect at any time.
+        let mut server = ServerOptions::new()
+            .first_pipe_instance(false)
+            .create(&self.pipe_path.path)?;
+
         loop {
-            // Create a new pipe instance for this connection
-            let server = ServerOptions::new()
+            // Wait for a client to connect to the current instance
+            server.connect().await?;
+
+            // Immediately create the next pipe instance so there is always
+            // one available for incoming clients. This prevents the
+            // ERROR_PIPE_BUSY (os error 231) race condition that occurred
+            // when the next instance was only created at the top of the loop.
+            let connected = server;
+            server = ServerOptions::new()
                 .first_pipe_instance(false)
                 .create(&self.pipe_path.path)?;
-
-            // Wait for a client to connect
-            server.connect().await?;
 
             let tx = tx.clone();
             let state_fn = Arc::clone(&state_fn);
@@ -108,7 +118,8 @@ impl IpcServer for NamedPipeServer {
             let state_rx = state_rx.resubscribe();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(server, tx, state_fn, elapsed_fn, state_rx).await
+                if let Err(e) =
+                    handle_connection(connected, tx, state_fn, elapsed_fn, state_rx).await
                 {
                     // Don't log BrokenPipe errors - they're expected when clients disconnect
                     if e.kind() != io::ErrorKind::BrokenPipe {
@@ -236,7 +247,24 @@ impl IpcClient for NamedPipeClient {
     }
 
     async fn send_command(&self, cmd: &str) -> io::Result<String> {
-        let client = ClientOptions::new().open(&self.pipe_path.path)?;
+        // Retry opening the pipe in case of ERROR_PIPE_BUSY (os error 231).
+        // This can happen briefly while the server is recreating the next
+        // pipe instance after accepting a connection.
+        let client = {
+            const PIPE_BUSY: i32 = 231;
+            const MAX_RETRIES: usize = 5;
+            let mut attempts = 0;
+            loop {
+                match ClientOptions::new().open(&self.pipe_path.path) {
+                    Ok(c) => break c,
+                    Err(e) if e.raw_os_error() == Some(PIPE_BUSY) && attempts < MAX_RETRIES => {
+                        attempts += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        };
 
         let (reader, mut writer) = tokio::io::split(client);
 
