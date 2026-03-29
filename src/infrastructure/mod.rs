@@ -9,6 +9,7 @@ pub mod config;
 pub mod keystroke;
 pub mod notification;
 pub mod recording;
+pub mod smart_paste;
 pub mod transcription;
 
 // Re-export adapters
@@ -21,4 +22,5 @@ pub use keystroke::{
 };
 pub use notification::{create_notifier, NotifyRustNotifier, NotifySendNotifier};
 pub use recording::{create_recorder, CpalRecorder};
+pub use smart_paste::{create_smart_paste, NoOpSmartPaste};
 pub use transcription::{ChatGptTranscriber, GeminiTranscriber};

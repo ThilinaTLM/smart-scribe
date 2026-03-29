@@ -59,11 +59,12 @@ async fn main() -> ExitCode {
             .to_string()
         });
 
-        // Build LinuxConfig with indicator settings
+        // Build LinuxConfig with indicator and paste settings
         let linux = Some(LinuxConfig {
             keystroke_tool: cli.keystroke_tool.clone(),
             indicator: if cli.indicator { Some(true) } else { None },
             indicator_position: indicator_position_str,
+            paste: if cli.paste { Some(true) } else { None },
         });
 
         AppConfig {
@@ -134,6 +135,8 @@ async fn main() -> ExitCode {
             clipboard: config.clipboard_or_default(),
             keystroke: config.keystroke_or_default(),
             keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
+            #[cfg(target_os = "linux")]
+            paste: config.paste_or_default(),
             notify: config.notify_or_default(),
             audio_cue: config.audio_cue_or_default(),
             #[cfg(target_os = "linux")]
@@ -162,6 +165,8 @@ async fn main() -> ExitCode {
             clipboard: config.clipboard_or_default(),
             keystroke: config.keystroke_or_default(),
             keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
+            #[cfg(target_os = "linux")]
+            paste: config.paste_or_default(),
             notify: config.notify_or_default(),
             audio_cue: config.audio_cue_or_default(),
         };

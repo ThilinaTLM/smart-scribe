@@ -36,6 +36,11 @@ pub struct Cli {
     #[arg(short = 'n', long)]
     pub notify: bool,
 
+    /// Smart paste: capture window, transcribe, paste via clipboard (Linux/KDE Wayland)
+    #[cfg(target_os = "linux")]
+    #[arg(short = 'p', long, conflicts_with_all = ["clipboard", "keystroke"])]
+    pub paste: bool,
+
     /// Play audio cues on recording events
     #[arg(short = 'a', long)]
     pub audio_cue: bool,
@@ -214,6 +219,8 @@ pub struct TranscribeOptions {
     pub clipboard: bool,
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
+    #[cfg(target_os = "linux")]
+    pub paste: bool,
     pub notify: bool,
     pub audio_cue: bool,
 }
@@ -226,6 +233,8 @@ pub struct DaemonOptions {
     pub clipboard: bool,
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
+    #[cfg(target_os = "linux")]
+    pub paste: bool,
     pub notify: bool,
     pub audio_cue: bool,
     #[cfg(target_os = "linux")]
@@ -253,6 +262,7 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "linux.keystroke_tool",
     "linux.indicator",
     "linux.indicator_position",
+    "linux.paste",
 ];
 
 /// Valid config keys (non-Linux)

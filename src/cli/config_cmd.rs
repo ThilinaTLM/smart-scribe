@@ -118,6 +118,18 @@ async fn handle_set<S: ConfigStore>(
                 linux.indicator_position = Some(value.to_string());
             }
         }
+        "linux.paste" => {
+            if config.linux.is_none() {
+                config.linux = Some(LinuxConfig::default());
+            }
+            if let Some(ref mut linux) = config.linux {
+                linux.paste =
+                    Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                        key: key.to_string(),
+                        message: "Value must be 'true' or 'false'".to_string(),
+                    })?);
+            }
+        }
         _ => unreachable!(), // Already validated
     }
 
@@ -164,6 +176,11 @@ async fn handle_get<S: ConfigStore>(
             .linux
             .as_ref()
             .and_then(|l| l.indicator_position.clone()),
+        "linux.paste" => config
+            .linux
+            .as_ref()
+            .and_then(|l| l.paste)
+            .map(|b| b.to_string()),
         _ => unreachable!(),
     };
 
@@ -252,6 +269,15 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
             .and_then(|l| l.indicator_position.as_deref())
             .unwrap_or("(not set)"),
     );
+    presenter.key_value(
+        "linux.paste",
+        &config
+            .linux
+            .as_ref()
+            .and_then(|l| l.paste)
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "(not set)".to_string()),
+    );
 
     Ok(())
 }
@@ -293,7 +319,7 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                     message: e.to_string(),
                 })?;
         }
-        "clipboard" | "keystroke" | "notify" | "audio_cue" => {
+        "clipboard" | "keystroke" | "notify" | "audio_cue" | "linux.paste" => {
             parse_bool(value).map_err(|_| ConfigError::ValidationError {
                 key: key.to_string(),
                 message: "Value must be 'true' or 'false'".to_string(),

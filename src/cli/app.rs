@@ -12,7 +12,8 @@ use crate::domain::config::AppConfig;
 use crate::domain::transcription::{AudioData, SystemPrompt};
 use crate::infrastructure::{
     create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
-    ChatGptTranscriber, GeminiTranscriber, KeystrokeToolPreference, NoOpKeystroke, XdgConfigStore,
+    create_smart_paste, ChatGptTranscriber, GeminiTranscriber, KeystrokeToolPreference,
+    NoOpKeystroke, NoOpSmartPaste, XdgConfigStore,
 };
 
 use super::args::TranscribeOptions;
@@ -91,7 +92,10 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
 
     // Create adapters (using cross-platform implementations)
     let recorder = create_recorder();
-    let clipboard = create_clipboard();
+    let (clipboard, clipboard_tool) = create_clipboard().await;
+    if options.clipboard {
+        eprintln!("Clipboard: using {}", clipboard_tool);
+    }
     let notifier = create_notifier();
 
     // Parse keystroke tool preference
@@ -116,19 +120,50 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
             }
         };
 
+    // Create smart paste adapter (Linux only)
+    #[cfg(target_os = "linux")]
+    let smart_paste: Box<dyn crate::application::ports::SmartPaste> = if options.paste {
+        match create_smart_paste().await {
+            Ok(sp) => {
+                eprintln!("Paste: using kdotool+wl-copy+ydotool");
+                sp
+            }
+            Err(e) => {
+                presenter.error(&format!("Paste mode unavailable: {}", e));
+                return ExitCode::from(EXIT_ERROR);
+            }
+        }
+    } else {
+        Box::new(NoOpSmartPaste::new())
+    };
+    #[cfg(not(target_os = "linux"))]
+    let smart_paste = Box::new(NoOpSmartPaste::new());
+
     // Create use case
-    let use_case =
-        TranscribeRecordingUseCase::new(recorder, transcriber, clipboard, keystroke, notifier);
+    let use_case = TranscribeRecordingUseCase::new(
+        recorder,
+        transcriber,
+        clipboard,
+        keystroke,
+        notifier,
+        smart_paste,
+    );
 
     // Create audio cue adapter
     let audio_cue = Arc::new(create_audio_cue(options.audio_cue));
 
     // Create input
+    #[cfg(target_os = "linux")]
+    let enable_paste = options.paste;
+    #[cfg(not(target_os = "linux"))]
+    let enable_paste = false;
+
     let input = TranscribeInput {
         duration: options.duration,
         domain: options.domain,
         enable_clipboard: options.clipboard,
         enable_keystroke: options.keystroke,
+        enable_paste,
         enable_notify: options.notify,
     };
 
@@ -177,6 +212,9 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
             }
             if output.keystroke_sent {
                 presenter.info("Typed into window");
+            }
+            if output.paste_sent {
+                presenter.info("Pasted into window");
             }
 
             ExitCode::from(EXIT_SUCCESS)

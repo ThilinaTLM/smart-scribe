@@ -10,7 +10,7 @@ use crate::domain::transcription::{DomainId, SystemPrompt};
 
 use super::ports::{
     Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon, Notifier,
-    RecordingError, Transcriber, TranscriptionError, UnboundedRecorder,
+    RecordingError, SmartPaste, Transcriber, TranscriptionError, UnboundedRecorder,
 };
 
 /// Errors from the daemon use case
@@ -40,6 +40,8 @@ pub struct DaemonConfig {
     pub enable_clipboard: bool,
     /// Whether to type result into focused window
     pub enable_keystroke: bool,
+    /// Whether to use smart paste (Linux KDE Wayland only)
+    pub enable_paste: bool,
     /// Whether to show notifications
     pub enable_notify: bool,
 }
@@ -51,6 +53,7 @@ impl Default for DaemonConfig {
             max_duration: Duration::default_max_duration(),
             enable_clipboard: false,
             enable_keystroke: false,
+            enable_paste: false,
             enable_notify: false,
         }
     }
@@ -65,35 +68,40 @@ pub struct DaemonOutput {
     pub clipboard_copied: bool,
     /// Whether keystroke injection succeeded
     pub keystroke_sent: bool,
+    /// Whether smart paste succeeded
+    pub paste_sent: bool,
     /// Audio file size
     pub audio_size: String,
 }
 
 /// Daemon transcription use case
-pub struct DaemonTranscriptionUseCase<R, T, C, K, N>
+pub struct DaemonTranscriptionUseCase<R, T, C, K, N, P>
 where
     R: UnboundedRecorder,
     T: Transcriber,
     C: Clipboard,
     K: Keystroke,
     N: Notifier,
+    P: SmartPaste,
 {
     recorder: R,
     transcriber: T,
     clipboard: C,
     keystroke: K,
     notifier: N,
+    smart_paste: P,
     session: Arc<Mutex<DaemonSession>>,
     config: DaemonConfig,
 }
 
-impl<R, T, C, K, N> DaemonTranscriptionUseCase<R, T, C, K, N>
+impl<R, T, C, K, N, P> DaemonTranscriptionUseCase<R, T, C, K, N, P>
 where
     R: UnboundedRecorder,
     T: Transcriber,
     C: Clipboard,
     K: Keystroke,
     N: Notifier,
+    P: SmartPaste,
 {
     /// Create a new daemon use case instance
     pub fn new(
@@ -102,6 +110,7 @@ where
         clipboard: C,
         keystroke: K,
         notifier: N,
+        smart_paste: P,
         config: DaemonConfig,
     ) -> Self {
         Self {
@@ -110,6 +119,7 @@ where
             clipboard,
             keystroke,
             notifier,
+            smart_paste,
             session: Arc::new(Mutex::new(DaemonSession::new())),
             config,
         }
@@ -125,6 +135,13 @@ where
         {
             let mut session = self.session.lock().await;
             session.start_recording()?;
+        }
+
+        // Capture active window for smart paste (before recording starts)
+        if self.config.enable_paste {
+            if let Err(e) = self.smart_paste.capture_active_window().await {
+                eprintln!("Warning: failed to capture active window: {}", e);
+            }
         }
 
         // Notify recording start
@@ -208,6 +225,19 @@ where
             false
         };
 
+        // Smart paste: paste into captured window via clipboard
+        let paste_sent = if self.config.enable_paste {
+            match self.smart_paste.paste(&text).await {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("Warning: smart paste failed: {}", e);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+
         // Complete processing
         {
             let mut session = self.session.lock().await;
@@ -230,6 +260,7 @@ where
             text,
             clipboard_copied,
             keystroke_sent,
+            paste_sent,
             audio_size,
         })
     }
@@ -285,7 +316,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::NotificationError;
+    use crate::application::ports::{NotificationError, SmartPasteError};
     use crate::domain::transcription::AudioData;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -375,6 +406,19 @@ mod tests {
         }
     }
 
+    struct MockSmartPaste;
+
+    #[async_trait]
+    impl SmartPaste for MockSmartPaste {
+        async fn capture_active_window(&self) -> Result<(), SmartPasteError> {
+            Ok(())
+        }
+
+        async fn paste(&self, _text: &str) -> Result<(), SmartPasteError> {
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn start_recording_from_idle() {
         let use_case = DaemonTranscriptionUseCase::new(
@@ -383,6 +427,7 @@ mod tests {
             MockClipboard,
             MockKeystroke,
             MockNotifier,
+            MockSmartPaste,
             DaemonConfig::default(),
         );
 
@@ -399,6 +444,7 @@ mod tests {
             MockClipboard,
             MockKeystroke,
             MockNotifier,
+            MockSmartPaste,
             DaemonConfig::default(),
         );
 
@@ -420,6 +466,7 @@ mod tests {
             MockClipboard,
             MockKeystroke,
             MockNotifier,
+            MockSmartPaste,
             DaemonConfig::default(),
         );
 
@@ -436,6 +483,7 @@ mod tests {
             MockClipboard,
             MockKeystroke,
             MockNotifier,
+            MockSmartPaste,
             DaemonConfig::default(),
         );
 

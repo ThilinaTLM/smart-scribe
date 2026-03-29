@@ -13,6 +13,7 @@ pub struct LinuxConfig {
     pub keystroke_tool: Option<String>,
     pub indicator: Option<bool>,
     pub indicator_position: Option<String>,
+    pub paste: Option<bool>,
 }
 
 /// Application configuration.
@@ -50,6 +51,7 @@ impl AppConfig {
                 keystroke_tool: Some("enigo".to_string()),
                 indicator: Some(false),
                 indicator_position: Some("top-right".to_string()),
+                paste: Some(false),
             }),
         }
     }
@@ -90,6 +92,7 @@ impl AppConfig {
                 keystroke_tool: o.keystroke_tool.or(b.keystroke_tool),
                 indicator: o.indicator.or(b.indicator),
                 indicator_position: o.indicator_position.or(b.indicator_position),
+                paste: o.paste.or(b.paste),
             }),
         }
     }
@@ -171,6 +174,15 @@ impl AppConfig {
             .as_ref()
             .and_then(|l| l.indicator_position.as_deref())
             .unwrap_or("top-right")
+    }
+
+    /// Get paste setting, or false if not set (Linux only)
+    #[cfg(target_os = "linux")]
+    pub fn paste_or_default(&self) -> bool {
+        self.linux
+            .as_ref()
+            .and_then(|l| l.paste)
+            .unwrap_or(false)
     }
 
     /// Get keystroke tool preference, or "enigo" if not set

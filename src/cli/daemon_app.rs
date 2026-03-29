@@ -13,7 +13,7 @@ use crate::domain::config::AppConfig;
 use crate::domain::daemon::{DaemonState, StateUpdate};
 use crate::infrastructure::{
     create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
-    KeystrokeToolPreference, NoOpKeystroke,
+    create_smart_paste, KeystrokeToolPreference, NoOpKeystroke, NoOpSmartPaste,
 };
 
 use super::app::{create_transcriber, EXIT_ERROR, EXIT_SUCCESS};
@@ -65,7 +65,10 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
 
     // Create adapters (using cross-platform implementations)
     let recorder = create_recorder();
-    let clipboard = create_clipboard();
+    let (clipboard, clipboard_tool) = create_clipboard().await;
+    if options.clipboard {
+        eprintln!("Clipboard: using {}", clipboard_tool);
+    }
     let notifier = create_notifier();
 
     // Parse keystroke tool preference
@@ -90,12 +93,37 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
             }
         };
 
+    // Create smart paste adapter (Linux only)
+    #[cfg(target_os = "linux")]
+    let smart_paste: Box<dyn crate::application::ports::SmartPaste> = if options.paste {
+        match create_smart_paste().await {
+            Ok(sp) => {
+                eprintln!("Paste: using kdotool+wl-copy+ydotool");
+                sp
+            }
+            Err(e) => {
+                presenter.error(&format!("Paste mode unavailable: {}", e));
+                return ExitCode::from(EXIT_ERROR);
+            }
+        }
+    } else {
+        Box::new(NoOpSmartPaste::new())
+    };
+    #[cfg(not(target_os = "linux"))]
+    let smart_paste = Box::new(NoOpSmartPaste::new());
+
     // Create daemon config
+    #[cfg(target_os = "linux")]
+    let enable_paste = options.paste;
+    #[cfg(not(target_os = "linux"))]
+    let enable_paste = false;
+
     let config = DaemonConfig {
         domain: options.domain,
         max_duration: options.max_duration,
         enable_clipboard: options.clipboard,
         enable_keystroke: options.keystroke,
+        enable_paste,
         enable_notify: options.notify,
     };
 
@@ -106,6 +134,7 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
         clipboard,
         keystroke,
         notifier,
+        smart_paste,
         config,
     );
 
@@ -198,8 +227,8 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
     }
 }
 
-async fn daemon_loop<R, T, C, K, N>(
-    use_case: &DaemonTranscriptionUseCase<R, T, C, K, N>,
+async fn daemon_loop<R, T, C, K, N, P>(
+    use_case: &DaemonTranscriptionUseCase<R, T, C, K, N, P>,
     signals: &mut DaemonSignalHandler,
     ctx: &DaemonLoopContext<'_>,
 ) -> bool
@@ -209,6 +238,7 @@ where
     C: crate::application::ports::Clipboard,
     K: crate::application::ports::Keystroke,
     N: crate::application::ports::Notifier,
+    P: crate::application::ports::SmartPaste,
 {
     // Helper to broadcast state updates
     let broadcast_state = |state: DaemonState, elapsed_ms: u64| {

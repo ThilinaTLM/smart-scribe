@@ -9,7 +9,7 @@ use crate::domain::transcription::{DomainId, SystemPrompt};
 
 use super::ports::{
     AudioRecorder, Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon,
-    Notifier, ProgressCallback, RecordingError, Transcriber, TranscriptionError,
+    Notifier, ProgressCallback, RecordingError, SmartPaste, Transcriber, TranscriptionError,
 };
 
 /// Errors from the transcribe use case
@@ -36,6 +36,8 @@ pub struct TranscribeInput {
     pub enable_clipboard: bool,
     /// Whether to type result into focused window
     pub enable_keystroke: bool,
+    /// Whether to use smart paste (Linux KDE Wayland only)
+    pub enable_paste: bool,
     /// Whether to show notifications
     pub enable_notify: bool,
 }
@@ -48,6 +50,7 @@ impl Default for TranscribeInput {
             domain: DomainId::default(),
             enable_clipboard: false,
             enable_keystroke: false,
+            enable_paste: false,
             enable_notify: false,
         }
     }
@@ -62,6 +65,8 @@ pub struct TranscribeOutput {
     pub clipboard_copied: bool,
     /// Whether keystroke injection succeeded (if enabled)
     pub keystroke_sent: bool,
+    /// Whether smart paste succeeded (if enabled)
+    pub paste_sent: bool,
     /// Audio file size in human-readable format
     pub audio_size: String,
 }
@@ -83,38 +88,49 @@ pub struct TranscribeCallbacks {
 }
 
 /// One-shot transcription use case
-pub struct TranscribeRecordingUseCase<R, T, C, K, N>
+pub struct TranscribeRecordingUseCase<R, T, C, K, N, P>
 where
     R: AudioRecorder,
     T: Transcriber,
     C: Clipboard,
     K: Keystroke,
     N: Notifier,
+    P: SmartPaste,
 {
     recorder: R,
     transcriber: T,
     clipboard: C,
     keystroke: K,
     notifier: N,
+    smart_paste: P,
     stop_flag: Arc<AtomicBool>,
 }
 
-impl<R, T, C, K, N> TranscribeRecordingUseCase<R, T, C, K, N>
+impl<R, T, C, K, N, P> TranscribeRecordingUseCase<R, T, C, K, N, P>
 where
     R: AudioRecorder,
     T: Transcriber,
     C: Clipboard,
     K: Keystroke,
     N: Notifier,
+    P: SmartPaste,
 {
     /// Create a new use case instance
-    pub fn new(recorder: R, transcriber: T, clipboard: C, keystroke: K, notifier: N) -> Self {
+    pub fn new(
+        recorder: R,
+        transcriber: T,
+        clipboard: C,
+        keystroke: K,
+        notifier: N,
+        smart_paste: P,
+    ) -> Self {
         Self {
             recorder,
             transcriber,
             clipboard,
             keystroke,
             notifier,
+            smart_paste,
             stop_flag: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -137,6 +153,13 @@ where
     ) -> Result<TranscribeOutput, TranscribeError> {
         // Reset stop flag
         self.stop_flag.store(false, Ordering::SeqCst);
+
+        // Capture active window for smart paste (before recording starts)
+        if input.enable_paste {
+            if let Err(e) = self.smart_paste.capture_active_window().await {
+                eprintln!("Warning: failed to capture active window: {}", e);
+            }
+        }
 
         // Notify recording start
         if input.enable_notify {
@@ -237,6 +260,19 @@ where
             false
         };
 
+        // Smart paste: paste into captured window via clipboard
+        let paste_sent = if input.enable_paste {
+            match self.smart_paste.paste(&text).await {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("Warning: smart paste failed: {}", e);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+
         // Notify completion
         if input.enable_notify {
             let _ = self
@@ -253,6 +289,7 @@ where
             text,
             clipboard_copied,
             keystroke_sent,
+            paste_sent,
             audio_size,
         })
     }
@@ -261,6 +298,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::SmartPasteError;
     use crate::domain::transcription::AudioData;
     use async_trait::async_trait;
 
@@ -323,6 +361,19 @@ mod tests {
         }
     }
 
+    struct MockSmartPaste;
+
+    #[async_trait]
+    impl SmartPaste for MockSmartPaste {
+        async fn capture_active_window(&self) -> Result<(), SmartPasteError> {
+            Ok(())
+        }
+
+        async fn paste(&self, _text: &str) -> Result<(), SmartPasteError> {
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn execute_returns_transcription() {
         let use_case = TranscribeRecordingUseCase::new(
@@ -331,6 +382,7 @@ mod tests {
             MockClipboard,
             MockKeystroke,
             MockNotifier,
+            MockSmartPaste,
         );
 
         let input = TranscribeInput::default();
@@ -350,6 +402,7 @@ mod tests {
             MockClipboard,
             MockKeystroke,
             MockNotifier,
+            MockSmartPaste,
         );
 
         let input = TranscribeInput {
@@ -370,6 +423,7 @@ mod tests {
             MockClipboard,
             MockKeystroke,
             MockNotifier,
+            MockSmartPaste,
         );
 
         let input = TranscribeInput {
