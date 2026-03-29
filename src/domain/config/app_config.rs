@@ -179,10 +179,7 @@ impl AppConfig {
     /// Get paste setting, or false if not set (Linux only)
     #[cfg(target_os = "linux")]
     pub fn paste_or_default(&self) -> bool {
-        self.linux
-            .as_ref()
-            .and_then(|l| l.paste)
-            .unwrap_or(false)
+        self.linux.as_ref().and_then(|l| l.paste).unwrap_or(false)
     }
 
     /// Get keystroke tool preference, or "enigo" if not set

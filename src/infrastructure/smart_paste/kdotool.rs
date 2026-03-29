@@ -89,9 +89,7 @@ impl SmartPaste for KdotoolSmartPaste {
     async fn paste(&self, text: &str) -> Result<(), SmartPasteError> {
         let window_id = {
             let guard = self.captured_window_id.lock().await;
-            guard
-                .clone()
-                .ok_or(SmartPasteError::NoWindowCaptured)?
+            guard.clone().ok_or(SmartPasteError::NoWindowCaptured)?
         };
 
         // 1. Backup current clipboard (may fail if empty — that's fine)
@@ -162,10 +160,9 @@ async fn set_clipboard(text: &str) -> Result<(), SmartPasteError> {
         })?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(text.as_bytes())
-            .await
-            .map_err(|e| SmartPasteError::PasteFailed(format!("Failed to write to wl-copy: {}", e)))?;
+        stdin.write_all(text.as_bytes()).await.map_err(|e| {
+            SmartPasteError::PasteFailed(format!("Failed to write to wl-copy: {}", e))
+        })?;
     }
 
     let status = child
@@ -214,12 +211,8 @@ async fn is_terminal_window(window_id: &str) -> bool {
 
     match output {
         Ok(out) if out.status.success() => {
-            let class = String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .to_lowercase();
-            TERMINAL_CLASSES
-                .iter()
-                .any(|tc| class.contains(tc))
+            let class = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
+            TERMINAL_CLASSES.iter().any(|tc| class.contains(tc))
         }
         _ => false, // If we can't determine, assume non-terminal
     }
@@ -282,7 +275,12 @@ mod tests {
     #[test]
     fn terminal_classes_are_lowercase() {
         for class in TERMINAL_CLASSES {
-            assert_eq!(*class, class.to_lowercase(), "Terminal class should be lowercase: {}", class);
+            assert_eq!(
+                *class,
+                class.to_lowercase(),
+                "Terminal class should be lowercase: {}",
+                class
+            );
         }
     }
 
