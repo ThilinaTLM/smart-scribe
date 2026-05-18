@@ -3,12 +3,17 @@
 use std::env;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use async_trait::async_trait;
+use tokio::time::timeout;
 
-use crate::application::ports::{AudioCueType, ConfigStore, Transcriber, TranscriptionError};
+use crate::application::ports::{
+    AudioCue, AudioCueType, ConfigStore, Transcriber, TranscriptionError,
+};
 use crate::application::{TranscribeCallbacks, TranscribeInput, TranscribeRecordingUseCase};
 use crate::domain::config::AppConfig;
+use crate::domain::recording::Duration;
 use crate::domain::transcription::{AudioData, SystemPrompt};
 use crate::infrastructure::{
     create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
@@ -17,8 +22,12 @@ use crate::infrastructure::{
 };
 
 use super::args::TranscribeOptions;
+use super::output::OneshotResponse;
 use super::presenter::Presenter;
-use super::signals::ShutdownSignal;
+use super::signals::DaemonSignalHandler;
+
+/// Poll interval for foreground recording updates.
+const FOREGROUND_POLL_MS: u64 = 200;
 
 /// Enum wrapper for dynamic backend dispatch
 pub enum AnyTranscriber {
@@ -72,7 +81,7 @@ pub const EXIT_USAGE_ERROR: u8 = 2;
 
 /// Run the one-shot transcription
 pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> ExitCode {
-    let presenter = Presenter::new();
+    let mut presenter = Presenter::new(options.output);
 
     // Create transcriber from merged config
     let transcriber = match create_transcriber(config) {
@@ -82,13 +91,6 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
             return ExitCode::from(EXIT_ERROR);
         }
     };
-
-    // Setup signal handler
-    let shutdown = ShutdownSignal::new();
-    if let Err(e) = shutdown.setup().await {
-        presenter.error(&format!("Failed to setup signal handler: {}", e));
-        return ExitCode::from(EXIT_ERROR);
-    }
 
     // Create adapters (using cross-platform implementations)
     let recorder = create_recorder();
@@ -150,7 +152,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
     );
 
     // Create audio cue adapter
-    let audio_cue = Arc::new(create_audio_cue(options.audio_cue));
+    let audio_cue: Arc<dyn AudioCue> = Arc::from(create_audio_cue(options.audio_cue));
 
     // Create input
     #[cfg(target_os = "linux")]
@@ -158,17 +160,179 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
     #[cfg(not(target_os = "linux"))]
     let enable_paste = false;
 
-    let input = TranscribeInput {
-        duration: options.duration,
-        domain: options.domain,
-        enable_clipboard: options.clipboard,
-        enable_keystroke: options.keystroke,
-        enable_paste,
-        enable_notify: options.notify,
-    };
+    match options.duration {
+        Some(duration) => {
+            let input = TranscribeInput {
+                duration,
+                domain: options.domain,
+                enable_clipboard: options.clipboard,
+                enable_keystroke: options.keystroke,
+                enable_paste,
+                enable_notify: options.notify,
+            };
+            let callbacks = fixed_callbacks(Arc::clone(&audio_cue));
 
-    // Create callbacks (simplified - use eprintln for status)
-    let callbacks = TranscribeCallbacks {
+            match use_case.execute(input, callbacks).await {
+                Ok(output) => present_output(&presenter, output),
+                Err(e) => {
+                    presenter.error(&e.to_string());
+                    ExitCode::from(EXIT_ERROR)
+                }
+            }
+        }
+        None => {
+            let input = TranscribeInput {
+                duration: options
+                    .max_duration
+                    .unwrap_or_else(Duration::default_duration),
+                domain: options.domain,
+                enable_clipboard: options.clipboard,
+                enable_keystroke: options.keystroke,
+                enable_paste,
+                enable_notify: options.notify,
+            };
+            let callbacks = TranscribeCallbacks {
+                on_progress: None,
+                on_recording_start: None,
+                on_recording_end: None,
+                on_transcribing_start: None,
+                on_transcribing_end: None,
+            };
+
+            let (mut signals, _signal_tx) = match DaemonSignalHandler::new().await {
+                Ok(s) => s,
+                Err(e) => {
+                    presenter.error(&format!("Failed to setup signal handler: {}", e));
+                    return ExitCode::from(EXIT_ERROR);
+                }
+            };
+
+            if let Err(e) = use_case.start_recording(&input, &callbacks).await {
+                presenter.error(&e.to_string());
+                return ExitCode::from(EXIT_ERROR);
+            }
+
+            let cue = Arc::clone(&audio_cue);
+            tokio::spawn(async move {
+                let _ = cue.play(AudioCueType::RecordingStart).await;
+            });
+
+            presenter.start_spinner(&foreground_recording_message(0, options.max_duration));
+
+            loop {
+                let elapsed_ms = use_case.elapsed_ms();
+
+                if let Some(max_duration) = options.max_duration {
+                    if elapsed_ms >= max_duration.as_millis() {
+                        presenter.warn("Max duration reached, stopping recording");
+                        break;
+                    }
+                }
+
+                presenter.update_spinner(&foreground_recording_message(
+                    elapsed_ms,
+                    options.max_duration,
+                ));
+
+                let wait_ms = options
+                    .max_duration
+                    .map(|max| {
+                        max.as_millis()
+                            .saturating_sub(elapsed_ms)
+                            .min(FOREGROUND_POLL_MS)
+                    })
+                    .unwrap_or(FOREGROUND_POLL_MS)
+                    .max(1);
+
+                match timeout(StdDuration::from_millis(wait_ms), signals.recv()).await {
+                    Ok(Some(_)) => break,
+                    Ok(None) => break,
+                    Err(_) => continue,
+                }
+            }
+
+            let stop_future = use_case.stop_recording();
+            tokio::pin!(stop_future);
+
+            let audio = tokio::select! {
+                result = &mut stop_future => {
+                    match result {
+                        Ok(audio) => audio,
+                        Err(e) => {
+                            presenter.spinner_fail("Recording failed");
+                            presenter.error(&e.to_string());
+                            return ExitCode::from(EXIT_ERROR);
+                        }
+                    }
+                }
+                signal = signals.recv() => {
+                    if signal.is_some() {
+                        presenter.spinner_fail("Recording aborted");
+                        return ExitCode::from(EXIT_ERROR);
+                    }
+
+                    match stop_future.await {
+                        Ok(audio) => audio,
+                        Err(e) => {
+                            presenter.spinner_fail("Recording failed");
+                            presenter.error(&e.to_string());
+                            return ExitCode::from(EXIT_ERROR);
+                        }
+                    }
+                }
+            };
+
+            presenter.spinner_success(&format!(
+                "Recording complete ({})",
+                audio.human_readable_size()
+            ));
+
+            let cue = Arc::clone(&audio_cue);
+            tokio::spawn(async move {
+                let _ = cue.play(AudioCueType::RecordingStop).await;
+            });
+
+            presenter.start_spinner("Transcribing... Press Ctrl+C to abort");
+
+            let transcribe_future = use_case.finalize_dynamic_recording(&input, &callbacks, audio);
+            tokio::pin!(transcribe_future);
+
+            let output = tokio::select! {
+                result = &mut transcribe_future => {
+                    match result {
+                        Ok(output) => output,
+                        Err(e) => {
+                            presenter.spinner_fail("Transcription failed");
+                            presenter.error(&e.to_string());
+                            return ExitCode::from(EXIT_ERROR);
+                        }
+                    }
+                }
+                signal = signals.recv() => {
+                    if signal.is_some() {
+                        presenter.spinner_fail("Transcription aborted");
+                        return ExitCode::from(EXIT_ERROR);
+                    }
+
+                    match transcribe_future.await {
+                        Ok(output) => output,
+                        Err(e) => {
+                            presenter.spinner_fail("Transcription failed");
+                            presenter.error(&e.to_string());
+                            return ExitCode::from(EXIT_ERROR);
+                        }
+                    }
+                }
+            };
+
+            presenter.spinner_success("Transcription complete");
+            present_output(&presenter, output)
+        }
+    }
+}
+
+fn fixed_callbacks(audio_cue: Arc<dyn AudioCue>) -> TranscribeCallbacks {
+    TranscribeCallbacks {
         on_progress: Some(Arc::new(move |_elapsed, _total| {
             // Progress handled by spinner
         })),
@@ -198,32 +362,37 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
         on_transcribing_end: Some(Box::new(|| {
             eprintln!("✓ Transcription complete");
         })),
-    };
-
-    // Execute
-    match use_case.execute(input, callbacks).await {
-        Ok(output) => {
-            // Output transcription to stdout
-            presenter.output(&output.text);
-
-            // Show status for clipboard/keystroke
-            if output.clipboard_copied {
-                presenter.info("Copied to clipboard");
-            }
-            if output.keystroke_sent {
-                presenter.info("Typed into window");
-            }
-            if output.paste_sent {
-                presenter.info("Pasted into window");
-            }
-
-            ExitCode::from(EXIT_SUCCESS)
-        }
-        Err(e) => {
-            presenter.error(&e.to_string());
-            ExitCode::from(EXIT_ERROR)
-        }
     }
+}
+
+fn foreground_recording_message(elapsed_ms: u64, max_duration: Option<Duration>) -> String {
+    let elapsed = Duration::from_millis(elapsed_ms);
+
+    match max_duration {
+        Some(max) => format!("Recording... Press Ctrl+C to stop [{} / {}]", elapsed, max),
+        None => format!("Recording... Press Ctrl+C to stop [{}]", elapsed),
+    }
+}
+
+fn present_output(presenter: &Presenter, output: crate::application::TranscribeOutput) -> ExitCode {
+    if presenter.is_json() {
+        presenter.output_json(&OneshotResponse::from(output));
+        return ExitCode::from(EXIT_SUCCESS);
+    }
+
+    presenter.output(&output.text);
+
+    if output.clipboard_copied {
+        presenter.info("Copied to clipboard");
+    }
+    if output.keystroke_sent {
+        presenter.info("Typed into window");
+    }
+    if output.paste_sent {
+        presenter.info("Pasted into window");
+    }
+
+    ExitCode::from(EXIT_SUCCESS)
 }
 
 /// Get API key from environment or config file

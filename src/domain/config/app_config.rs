@@ -40,8 +40,8 @@ impl AppConfig {
             api_key: None,
             backend: Some("gemini".to_string()),
             chatgpt_cookie_file: None,
-            duration: Some("10s".to_string()),
-            max_duration: Some("60s".to_string()),
+            duration: None,
+            max_duration: None,
             domain: Some("general".to_string()),
             clipboard: Some(false),
             keystroke: Some(false),
@@ -199,8 +199,8 @@ mod tests {
     fn defaults_have_expected_values() {
         let config = AppConfig::defaults();
         assert!(config.api_key.is_none());
-        assert_eq!(config.duration, Some("10s".to_string()));
-        assert_eq!(config.max_duration, Some("60s".to_string()));
+        assert!(config.duration.is_none());
+        assert!(config.max_duration.is_none());
         assert_eq!(config.domain, Some("general".to_string()));
         assert_eq!(config.clipboard, Some(false));
         assert_eq!(config.keystroke, Some(false));

@@ -16,6 +16,7 @@ fn help_output() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("transcription"));
+    assert!(stdout.contains("--output"));
     assert!(stdout.contains("--duration"));
     assert!(stdout.contains("--domain"));
     assert!(stdout.contains("--daemon"));
@@ -48,6 +49,21 @@ fn config_path_command() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("smart-scribe"));
     assert!(stdout.contains("config.toml"));
+}
+
+#[test]
+fn daemon_help() {
+    let output = smart_scribe_bin()
+        .args(["daemon", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("toggle"));
+    assert!(stdout.contains("cancel"));
+    assert!(stdout.contains("status"));
+    assert!(stdout.contains("subscribe"));
 }
 
 #[test]

@@ -1,7 +1,10 @@
 //! Daemon command handler - sends commands to running daemon via IPC
 
+use tokio::io::AsyncBufReadExt;
+
 use super::args::DaemonAction;
 use super::ipc::create_ipc_client;
+use super::output::{DaemonCommandAck, DaemonStatusCommandResponse, DaemonStatusPayload};
 use super::presenter::Presenter;
 
 /// Handle daemon subcommand
@@ -16,28 +19,95 @@ pub async fn handle_daemon_command(
         return Err("No daemon running. Start with: smart-scribe --daemon".to_string());
     }
 
-    let cmd = match action {
-        DaemonAction::Toggle => "toggle",
-        DaemonAction::Cancel => "cancel",
-        DaemonAction::Status => "status",
-    };
-
-    let response = client
-        .send_command(cmd)
-        .await
-        .map_err(|e| format!("Failed to communicate with daemon: {}", e))?;
-
-    let response = response.trim();
-
     match action {
-        DaemonAction::Status => {
-            presenter.info(&format!("Daemon status: {}", response));
-        }
-        _ => {
+        DaemonAction::Toggle => {
+            let response = client
+                .send_command("toggle")
+                .await
+                .map_err(|e| format!("Failed to communicate with daemon: {}", e))?;
+            let response = response.trim();
+
             if let Some(stripped) = response.strip_prefix("error:") {
                 return Err(stripped.trim().to_string());
             }
-            presenter.info(&format!("Command sent: {}", cmd));
+
+            if presenter.is_json() {
+                presenter.output_json(&DaemonCommandAck {
+                    ok: true,
+                    command: "toggle",
+                    accepted: true,
+                });
+            } else {
+                presenter.info("Command sent: toggle");
+            }
+        }
+        DaemonAction::Cancel => {
+            let response = client
+                .send_command("cancel")
+                .await
+                .map_err(|e| format!("Failed to communicate with daemon: {}", e))?;
+            let response = response.trim();
+
+            if let Some(stripped) = response.strip_prefix("error:") {
+                return Err(stripped.trim().to_string());
+            }
+
+            if presenter.is_json() {
+                presenter.output_json(&DaemonCommandAck {
+                    ok: true,
+                    command: "cancel",
+                    accepted: true,
+                });
+            } else {
+                presenter.info("Command sent: cancel");
+            }
+        }
+        DaemonAction::Status => {
+            if presenter.is_json() {
+                let response = client
+                    .send_command("status-json")
+                    .await
+                    .map_err(|e| format!("Failed to communicate with daemon: {}", e))?;
+                let payload: DaemonStatusPayload = serde_json::from_str(response.trim())
+                    .map_err(|e| format!("Failed to parse daemon status: {}", e))?;
+
+                presenter.output_json(&DaemonStatusCommandResponse {
+                    ok: true,
+                    command: "status",
+                    state: payload.state,
+                    elapsed_ms: payload.elapsed_ms,
+                });
+            } else {
+                let response = client
+                    .send_command("status")
+                    .await
+                    .map_err(|e| format!("Failed to communicate with daemon: {}", e))?;
+                presenter.info(&format!("Daemon status: {}", response.trim()));
+            }
+        }
+        DaemonAction::Subscribe => {
+            if !presenter.is_json() {
+                return Err("daemon subscribe requires --output json".to_string());
+            }
+
+            let mut reader = client
+                .subscribe()
+                .await
+                .map_err(|e| format!("Failed to subscribe to daemon events: {}", e))?;
+
+            loop {
+                let mut line = String::new();
+                let bytes = reader
+                    .read_line(&mut line)
+                    .await
+                    .map_err(|e| format!("Failed to read daemon event: {}", e))?;
+
+                if bytes == 0 {
+                    break;
+                }
+
+                presenter.output_line(&line);
+            }
         }
     }
 

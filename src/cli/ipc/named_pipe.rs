@@ -4,13 +4,14 @@ use std::io;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 use tokio::sync::{broadcast, mpsc};
 
 use super::{ElapsedFn, IpcClient, IpcServer, StateFn};
+use crate::cli::output::{DaemonEvent, DaemonStatusPayload};
 use crate::cli::signals::DaemonSignal;
-use crate::domain::daemon::{DaemonState, StateUpdate};
+use crate::domain::daemon::DaemonState;
 
 /// Named pipe path
 const PIPE_NAME: &str = r"\\.\pipe\smart-scribe";
@@ -80,7 +81,7 @@ impl IpcServer for NamedPipeServer {
         tx: mpsc::Sender<DaemonSignal>,
         state_fn: StateFn,
         elapsed_fn: ElapsedFn,
-        state_rx: broadcast::Receiver<StateUpdate>,
+        event_rx: broadcast::Receiver<DaemonEvent>,
     ) -> io::Result<()> {
         if !self.bound {
             return Err(io::Error::new(
@@ -115,11 +116,11 @@ impl IpcServer for NamedPipeServer {
             let tx = tx.clone();
             let state_fn = Arc::clone(&state_fn);
             let elapsed_fn = Arc::clone(&elapsed_fn);
-            let state_rx = state_rx.resubscribe();
+            let event_rx = event_rx.resubscribe();
 
             tokio::spawn(async move {
                 if let Err(e) =
-                    handle_connection(connected, tx, state_fn, elapsed_fn, state_rx).await
+                    handle_connection(connected, tx, state_fn, elapsed_fn, event_rx).await
                 {
                     // Don't log BrokenPipe errors - they're expected when clients disconnect
                     if e.kind() != io::ErrorKind::BrokenPipe {
@@ -141,7 +142,7 @@ async fn handle_connection<T>(
     tx: mpsc::Sender<DaemonSignal>,
     state_fn: Arc<StateFn>,
     elapsed_fn: Arc<ElapsedFn>,
-    mut state_rx: broadcast::Receiver<StateUpdate>,
+    mut event_rx: broadcast::Receiver<DaemonEvent>,
 ) -> io::Result<()>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -179,18 +180,26 @@ where
             writer.flush().await?;
             writer.shutdown().await?;
         }
+        "status-json" => {
+            let payload = DaemonStatusPayload {
+                state: state_fn(),
+                elapsed_ms: elapsed_fn(),
+            };
+            writer.write_all(payload.to_json_line().as_bytes()).await?;
+            writer.flush().await?;
+            writer.shutdown().await?;
+        }
         "subscribe" => {
             // Send initial state
-            let initial = StateUpdate::new(state_fn(), elapsed_fn());
+            let initial = DaemonEvent::state(state_fn(), elapsed_fn());
             writer.write_all(initial.to_json_line().as_bytes()).await?;
             writer.flush().await?;
 
-            // Stream state updates until client disconnects
+            // Stream events until client disconnects
             loop {
-                match state_rx.recv().await {
-                    Ok(update) => {
-                        if let Err(e) = writer.write_all(update.to_json_line().as_bytes()).await {
-                            // Client disconnected
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        if let Err(e) = writer.write_all(event.to_json_line().as_bytes()).await {
                             if e.kind() == io::ErrorKind::BrokenPipe {
                                 break;
                             }
@@ -205,8 +214,7 @@ where
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // Subscriber lagged behind, send current state to catch up
-                        let current = StateUpdate::new(state_fn(), elapsed_fn());
+                        let current = DaemonEvent::state(state_fn(), elapsed_fn());
                         if let Err(e) = writer.write_all(current.to_json_line().as_bytes()).await {
                             if e.kind() == io::ErrorKind::BrokenPipe {
                                 break;
@@ -216,7 +224,6 @@ where
                     }
                 }
             }
-            // Don't shutdown here as the client may still want to read
         }
         _ => {
             writer.write_all(b"error: unknown command\n").await?;
@@ -278,6 +285,29 @@ impl IpcClient for NamedPipeClient {
         reader.read_line(&mut response).await?;
 
         Ok(response)
+    }
+
+    async fn subscribe(&self) -> io::Result<Box<dyn AsyncBufRead + Unpin + Send>> {
+        let client = {
+            const PIPE_BUSY: i32 = 231;
+            const MAX_RETRIES: usize = 5;
+            let mut attempts = 0;
+            loop {
+                match ClientOptions::new().open(&self.pipe_path.path) {
+                    Ok(c) => break c,
+                    Err(e) if e.raw_os_error() == Some(PIPE_BUSY) && attempts < MAX_RETRIES => {
+                        attempts += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+
+        let mut client = client;
+        client.write_all(b"subscribe\n").await?;
+        client.flush().await?;
+        Ok(Box::new(BufReader::new(client)))
     }
 }
 

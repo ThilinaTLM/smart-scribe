@@ -5,11 +5,12 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::domain::recording::Duration;
-use crate::domain::transcription::{DomainId, SystemPrompt};
+use crate::domain::transcription::{AudioData, DomainId, SystemPrompt};
 
 use super::ports::{
     AudioRecorder, Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon,
     Notifier, ProgressCallback, RecordingError, SmartPaste, Transcriber, TranscriptionError,
+    UnboundedRecorder,
 };
 
 /// Errors from the transcribe use case
@@ -154,6 +155,23 @@ where
         // Reset stop flag
         self.stop_flag.store(false, Ordering::SeqCst);
 
+        self.prepare_recording(&input, &callbacks, true).await;
+
+        // Record audio
+        let audio = self
+            .recorder
+            .record(input.duration, callbacks.on_progress.clone())
+            .await?;
+
+        self.finalize_recording(&input, &callbacks, audio).await
+    }
+
+    async fn prepare_recording(
+        &self,
+        input: &TranscribeInput,
+        callbacks: &TranscribeCallbacks,
+        include_duration_in_notification: bool,
+    ) {
         // Capture active window for smart paste (before recording starts)
         if input.enable_paste {
             if let Err(e) = self.smart_paste.capture_active_window().await {
@@ -163,31 +181,44 @@ where
 
         // Notify recording start
         if input.enable_notify {
+            let body = if include_duration_in_notification {
+                format!("Recording for {}...", input.duration)
+            } else {
+                "Recording started...".to_string()
+            };
             let _ = self
                 .notifier
-                .notify(
-                    "SmartScribe",
-                    &format!("Recording for {}...", input.duration),
-                    NotificationIcon::Recording,
-                )
+                .notify("SmartScribe", &body, NotificationIcon::Recording)
                 .await;
         }
 
         if let Some(ref cb) = callbacks.on_recording_start {
             cb();
         }
+    }
 
-        // Record audio
-        let audio = self
-            .recorder
-            .record(input.duration, callbacks.on_progress)
-            .await?;
-
+    async fn finalize_recording(
+        &self,
+        input: &TranscribeInput,
+        callbacks: &TranscribeCallbacks,
+        audio: AudioData,
+    ) -> Result<TranscribeOutput, TranscribeError> {
         let audio_size = audio.human_readable_size();
 
         if let Some(ref cb) = callbacks.on_recording_end {
             cb(&audio_size);
         }
+
+        self.transcribe_audio(input, callbacks, audio).await
+    }
+
+    pub async fn transcribe_audio(
+        &self,
+        input: &TranscribeInput,
+        callbacks: &TranscribeCallbacks,
+        audio: AudioData,
+    ) -> Result<TranscribeOutput, TranscribeError> {
+        let audio_size = audio.human_readable_size();
 
         // Notify transcription start
         if input.enable_notify {
@@ -292,6 +323,54 @@ where
             paste_sent,
             audio_size,
         })
+    }
+}
+
+impl<R, T, C, K, N, P> TranscribeRecordingUseCase<R, T, C, K, N, P>
+where
+    R: AudioRecorder + UnboundedRecorder,
+    T: Transcriber,
+    C: Clipboard,
+    K: Keystroke,
+    N: Notifier,
+    P: SmartPaste,
+{
+    /// Start an unbounded recording session for foreground mode.
+    pub async fn start_recording(
+        &self,
+        input: &TranscribeInput,
+        callbacks: &TranscribeCallbacks,
+    ) -> Result<(), TranscribeError> {
+        self.stop_flag.store(false, Ordering::SeqCst);
+        self.prepare_recording(input, callbacks, false).await;
+        self.recorder.start().await?;
+        Ok(())
+    }
+
+    /// Stop an unbounded recording session and return the captured audio.
+    pub async fn stop_recording(&self) -> Result<AudioData, TranscribeError> {
+        Ok(self.recorder.stop().await?)
+    }
+
+    /// Cancel an in-progress unbounded recording session.
+    pub async fn cancel_recording(&self) -> Result<(), TranscribeError> {
+        self.recorder.cancel().await?;
+        Ok(())
+    }
+
+    /// Complete transcription for audio captured by foreground mode.
+    pub async fn finalize_dynamic_recording(
+        &self,
+        input: &TranscribeInput,
+        callbacks: &TranscribeCallbacks,
+        audio: AudioData,
+    ) -> Result<TranscribeOutput, TranscribeError> {
+        self.finalize_recording(input, callbacks, audio).await
+    }
+
+    /// Get elapsed recording time in milliseconds.
+    pub fn elapsed_ms(&self) -> u64 {
+        self.recorder.elapsed_ms()
     }
 }
 

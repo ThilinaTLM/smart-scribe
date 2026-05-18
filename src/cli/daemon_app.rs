@@ -19,6 +19,7 @@ use crate::infrastructure::{
 use super::app::{create_transcriber, EXIT_ERROR, EXIT_SUCCESS};
 use super::args::DaemonOptions;
 use super::ipc::create_ipc_server;
+use super::output::DaemonEvent;
 use super::pid_file::{PidFile, PidFileError};
 use super::presenter::Presenter;
 use super::signals::{DaemonSignal, DaemonSignalHandler};
@@ -33,12 +34,13 @@ struct DaemonLoopContext<'a> {
     shared_state: &'a Arc<Mutex<DaemonState>>,
     shared_elapsed: &'a Arc<Mutex<u64>>,
     state_tx: &'a broadcast::Sender<StateUpdate>,
+    event_tx: &'a broadcast::Sender<DaemonEvent>,
     audio_cue: &'a Arc<dyn AudioCue>,
 }
 
 /// Run daemon mode
 pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode {
-    let presenter = Presenter::new();
+    let presenter = Presenter::new(options.output);
 
     // Acquire PID file
     let pid_file = PidFile::new();
@@ -162,8 +164,9 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
     let state_for_ipc = Arc::clone(&state);
     let elapsed_for_ipc = Arc::clone(&elapsed);
 
-    // Create broadcast channel for state updates
-    let (state_tx, state_rx) = broadcast::channel::<StateUpdate>(STATE_BROADCAST_CAPACITY);
+    // Create broadcast channels for indicator and external subscribers
+    let (state_tx, _state_rx) = broadcast::channel::<StateUpdate>(STATE_BROADCAST_CAPACITY);
+    let (event_tx, event_rx) = broadcast::channel::<DaemonEvent>(STATE_BROADCAST_CAPACITY);
 
     // Spawn indicator thread if enabled (Linux only, requires Wayland)
     #[cfg(target_os = "linux")]
@@ -191,7 +194,7 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
                     *state_for_ipc.lock().unwrap_or_else(|e| e.into_inner())
                 }),
                 Box::new(move || *elapsed_for_ipc.lock().unwrap_or_else(|e| e.into_inner())),
-                state_rx,
+                event_rx,
             )
             .await;
     });
@@ -213,6 +216,7 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
         shared_state: &state,
         shared_elapsed: &elapsed,
         state_tx: &state_tx,
+        event_tx: &event_tx,
         audio_cue: &audio_cue,
     };
     let result = daemon_loop(&use_case, &mut signals, &ctx).await;
@@ -249,8 +253,16 @@ where
         if let Ok(mut guard) = ctx.shared_elapsed.lock() {
             *guard = elapsed_ms;
         }
+
+        let update = StateUpdate::new(state, elapsed_ms);
+
         // Broadcast to subscribers (ignore if no receivers)
-        let _ = ctx.state_tx.send(StateUpdate::new(state, elapsed_ms));
+        let _ = ctx.state_tx.send(update.clone());
+        let _ = ctx.event_tx.send(DaemonEvent::from(update));
+    };
+
+    let emit_event = |event: DaemonEvent| {
+        let _ = ctx.event_tx.send(event);
     };
 
     loop {
@@ -302,6 +314,7 @@ where
                         if let Err(e) = use_case.start_recording().await {
                             ctx.presenter
                                 .error(&format!("Failed to start recording: {}", e));
+                            emit_event(DaemonEvent::error("start", e.to_string()));
                             continue;
                         }
                         let _ = ctx.audio_cue.play(AudioCueType::RecordingStart).await;
@@ -323,13 +336,20 @@ where
                                 // Now transcribe
                                 match use_case.transcribe_audio(audio).await {
                                     Ok(output) => {
-                                        ctx.presenter.output(&output.text);
+                                        if ctx.presenter.is_json() {
+                                            let event = DaemonEvent::from(output.clone());
+                                            ctx.presenter.output_json(&event);
+                                        } else {
+                                            ctx.presenter.output(&output.text);
+                                        }
+                                        emit_event(DaemonEvent::from(output));
                                         ctx.presenter.daemon_status("Idle");
                                         broadcast_state(DaemonState::Idle, 0);
                                     }
                                     Err(e) => {
                                         ctx.presenter
                                             .error(&format!("Transcription failed: {}", e));
+                                        emit_event(DaemonEvent::error("transcribe", e.to_string()));
                                         ctx.presenter.daemon_status("Idle (error)");
                                         broadcast_state(DaemonState::Idle, 0);
                                     }
@@ -338,6 +358,7 @@ where
                             Err(e) => {
                                 ctx.presenter
                                     .error(&format!("Failed to stop recording: {}", e));
+                                emit_event(DaemonEvent::error("stop", e.to_string()));
                                 ctx.presenter.daemon_status("Idle (error)");
                                 broadcast_state(DaemonState::Idle, 0);
                             }
@@ -356,8 +377,10 @@ where
                 if current_state == DaemonState::Recording {
                     if let Err(e) = use_case.cancel().await {
                         ctx.presenter.error(&format!("Failed to cancel: {}", e));
+                        emit_event(DaemonEvent::error("cancel", e.to_string()));
                     } else {
                         let _ = ctx.audio_cue.play(AudioCueType::RecordingCancel).await;
+                        emit_event(DaemonEvent::Cancelled);
                         ctx.presenter.daemon_status("Recording cancelled");
                         broadcast_state(DaemonState::Idle, 0);
                     }
@@ -372,6 +395,7 @@ where
                     // Cancel any in-progress recording
                     let _ = use_case.cancel().await;
                 }
+                emit_event(DaemonEvent::Shutdown);
                 ctx.presenter.daemon_status("Shutting down...");
                 broadcast_state(DaemonState::Idle, 0);
                 return true;

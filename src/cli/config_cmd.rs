@@ -1,5 +1,7 @@
 //! Config command handler
 
+use std::collections::BTreeMap;
+
 use crate::application::ports::ConfigStore;
 use crate::domain::config::LinuxConfig;
 use crate::domain::error::ConfigError;
@@ -27,10 +29,18 @@ pub async fn handle_config_command<S: ConfigStore>(
 
 async fn handle_init<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result<(), ConfigError> {
     store.init().await?;
-    presenter.success(&format!(
-        "Config file created at: {}",
-        store.path().display()
-    ));
+    if presenter.is_json() {
+        presenter.output_json(&serde_json::json!({
+            "ok": true,
+            "action": "init",
+            "path": store.path().to_string_lossy(),
+        }));
+    } else {
+        presenter.success(&format!(
+            "Config file created at: {}",
+            store.path().display()
+        ));
+    }
     Ok(())
 }
 
@@ -135,7 +145,16 @@ async fn handle_set<S: ConfigStore>(
 
     // Save config
     store.save(&config).await?;
-    presenter.success(&format!("{} = {}", key, value));
+    if presenter.is_json() {
+        presenter.output_json(&serde_json::json!({
+            "ok": true,
+            "action": "set",
+            "key": key,
+            "value": value,
+        }));
+    } else {
+        presenter.success(&format!("{} = {}", key, value));
+    }
 
     Ok(())
 }
@@ -184,9 +203,18 @@ async fn handle_get<S: ConfigStore>(
         _ => unreachable!(),
     };
 
-    match value {
-        Some(v) => presenter.output(&v),
-        None => presenter.output("(not set)"),
+    if presenter.is_json() {
+        presenter.output_json(&serde_json::json!({
+            "ok": true,
+            "action": "get",
+            "key": key,
+            "value": value,
+        }));
+    } else {
+        match value {
+            Some(v) => presenter.output(&v),
+            None => presenter.output("(not set)"),
+        }
     }
 
     Ok(())
@@ -195,95 +223,86 @@ async fn handle_get<S: ConfigStore>(
 async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result<(), ConfigError> {
     let config = store.load().await?;
 
-    presenter.key_value(
-        "api_key",
-        &config
-            .api_key
-            .map(|s| mask_api_key(&s))
-            .unwrap_or_else(|| "(not set)".to_string()),
-    );
-    presenter.key_value("backend", config.backend.as_deref().unwrap_or("(not set)"));
-    presenter.key_value(
-        "chatgpt_cookie_file",
-        config.chatgpt_cookie_file.as_deref().unwrap_or("(not set)"),
-    );
-    presenter.key_value(
-        "duration",
-        config.duration.as_deref().unwrap_or("(not set)"),
-    );
-    presenter.key_value(
-        "max_duration",
-        config.max_duration.as_deref().unwrap_or("(not set)"),
-    );
-    presenter.key_value("domain", config.domain.as_deref().unwrap_or("(not set)"));
-    presenter.key_value(
-        "clipboard",
-        &config
-            .clipboard
-            .map(|b| b.to_string())
-            .unwrap_or_else(|| "(not set)".to_string()),
-    );
-    presenter.key_value(
-        "keystroke",
-        &config
-            .keystroke
-            .map(|b| b.to_string())
-            .unwrap_or_else(|| "(not set)".to_string()),
-    );
-    presenter.key_value(
-        "notify",
-        &config
-            .notify
-            .map(|b| b.to_string())
-            .unwrap_or_else(|| "(not set)".to_string()),
-    );
-    presenter.key_value(
-        "audio_cue",
-        &config
-            .audio_cue
-            .map(|b| b.to_string())
-            .unwrap_or_else(|| "(not set)".to_string()),
-    );
-    presenter.key_value(
-        "linux.keystroke_tool",
-        config
-            .linux
-            .as_ref()
-            .and_then(|l| l.keystroke_tool.as_deref())
-            .unwrap_or("(not set)"),
-    );
-    presenter.key_value(
-        "linux.indicator",
-        &config
-            .linux
-            .as_ref()
-            .and_then(|l| l.indicator)
-            .map(|b| b.to_string())
-            .unwrap_or_else(|| "(not set)".to_string()),
-    );
-    presenter.key_value(
-        "linux.indicator_position",
-        config
-            .linux
-            .as_ref()
-            .and_then(|l| l.indicator_position.as_deref())
-            .unwrap_or("(not set)"),
-    );
-    presenter.key_value(
-        "linux.paste",
-        &config
-            .linux
-            .as_ref()
-            .and_then(|l| l.paste)
-            .map(|b| b.to_string())
-            .unwrap_or_else(|| "(not set)".to_string()),
-    );
+    let values = BTreeMap::from([
+        (
+            "api_key".to_string(),
+            config.api_key.as_ref().map(|s| mask_api_key(s)),
+        ),
+        ("backend".to_string(), config.backend.clone()),
+        (
+            "chatgpt_cookie_file".to_string(),
+            config.chatgpt_cookie_file.clone(),
+        ),
+        ("duration".to_string(), config.duration.clone()),
+        ("max_duration".to_string(), config.max_duration.clone()),
+        ("domain".to_string(), config.domain.clone()),
+        (
+            "clipboard".to_string(),
+            config.clipboard.map(|b| b.to_string()),
+        ),
+        (
+            "keystroke".to_string(),
+            config.keystroke.map(|b| b.to_string()),
+        ),
+        ("notify".to_string(), config.notify.map(|b| b.to_string())),
+        (
+            "audio_cue".to_string(),
+            config.audio_cue.map(|b| b.to_string()),
+        ),
+        (
+            "linux.keystroke_tool".to_string(),
+            config.linux.as_ref().and_then(|l| l.keystroke_tool.clone()),
+        ),
+        (
+            "linux.indicator".to_string(),
+            config
+                .linux
+                .as_ref()
+                .and_then(|l| l.indicator)
+                .map(|b| b.to_string()),
+        ),
+        (
+            "linux.indicator_position".to_string(),
+            config
+                .linux
+                .as_ref()
+                .and_then(|l| l.indicator_position.clone()),
+        ),
+        (
+            "linux.paste".to_string(),
+            config
+                .linux
+                .as_ref()
+                .and_then(|l| l.paste)
+                .map(|b| b.to_string()),
+        ),
+    ]);
+
+    if presenter.is_json() {
+        presenter.output_json(&serde_json::json!({
+            "ok": true,
+            "action": "list",
+            "values": values,
+        }));
+    } else {
+        for (key, value) in values {
+            presenter.key_value(&key, value.as_deref().unwrap_or("(not set)"));
+        }
+    }
 
     Ok(())
 }
 
 fn handle_path<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result<(), ConfigError> {
-    presenter.output(&store.path().to_string_lossy());
+    if presenter.is_json() {
+        presenter.output_json(&serde_json::json!({
+            "ok": true,
+            "action": "path",
+            "path": store.path().to_string_lossy(),
+        }));
+    } else {
+        presenter.output(&store.path().to_string_lossy());
+    }
     Ok(())
 }
 

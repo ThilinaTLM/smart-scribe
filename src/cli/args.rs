@@ -1,6 +1,7 @@
 //! CLI argument definitions using Clap
 
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
 
 use crate::domain::recording::Duration;
 use crate::domain::transcription::DomainId;
@@ -12,7 +13,17 @@ use crate::domain::transcription::DomainId;
 #[command(about = "AI-powered voice to text transcription")]
 #[command(long_about = None)]
 pub struct Cli {
-    /// Recording duration (e.g., 10s, 1m, 2m30s)
+    /// Output format (text for humans, json for machine-readable output)
+    #[arg(
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        global = true,
+        default_value = "text"
+    )]
+    pub output: OutputFormatArg,
+
+    /// Fixed recording duration (e.g., 10s, 1m, 2m30s). If omitted, recording runs until Ctrl+C.
     #[arg(short = 'd', long, value_name = "TIME", conflicts_with = "daemon")]
     pub duration: Option<String>,
 
@@ -57,8 +68,8 @@ pub struct Cli {
     #[arg(long)]
     pub daemon: bool,
 
-    /// Max recording duration for daemon mode
-    #[arg(long, value_name = "TIME", requires = "daemon")]
+    /// Optional safety limit for dynamic recording and daemon mode
+    #[arg(long, value_name = "TIME", conflicts_with = "duration")]
     pub max_duration: Option<String>,
 
     /// Show recording indicator overlay (daemon mode only, Linux/Wayland)
@@ -100,6 +111,8 @@ pub enum DaemonAction {
     Cancel,
     /// Show daemon status
     Status,
+    /// Subscribe to daemon events (JSON output only)
+    Subscribe,
 }
 
 /// Config action subcommands
@@ -123,6 +136,20 @@ pub enum ConfigAction {
     List,
     /// Show config file path
     Path,
+}
+
+/// Output format argument for clap ValueEnum
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputFormatArg {
+    Text,
+    Json,
+}
+
+impl OutputFormatArg {
+    pub const fn is_json(self) -> bool {
+        matches!(self, Self::Json)
+    }
 }
 
 /// Backend argument for clap ValueEnum
@@ -214,7 +241,9 @@ impl From<DomainId> for DomainArg {
 /// Parsed transcribe options (oneshot mode)
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
-    pub duration: Duration,
+    pub output: OutputFormatArg,
+    pub duration: Option<Duration>,
+    pub max_duration: Option<Duration>,
     pub domain: DomainId,
     pub clipboard: bool,
     pub keystroke: bool,
@@ -228,6 +257,7 @@ pub struct TranscribeOptions {
 /// Parsed daemon options
 #[derive(Debug, Clone)]
 pub struct DaemonOptions {
+    pub output: OutputFormatArg,
     pub max_duration: Duration,
     pub domain: DomainId,
     pub clipboard: bool,
@@ -303,6 +333,7 @@ mod tests {
     #[test]
     fn cli_parses_defaults() {
         let cli = Cli::parse_from(["smart-scribe"]);
+        assert_eq!(cli.output, OutputFormatArg::Text);
         assert!(cli.duration.is_none());
         assert!(cli.domain.is_none());
         assert!(!cli.clipboard);
@@ -341,10 +372,31 @@ mod tests {
     }
 
     #[test]
+    fn cli_parses_output_json() {
+        let cli = Cli::parse_from(["smart-scribe", "--output", "json"]);
+        assert_eq!(cli.output, OutputFormatArg::Json);
+    }
+
+    #[test]
     fn cli_parses_daemon_with_max_duration() {
         let cli = Cli::parse_from(["smart-scribe", "--daemon", "--max-duration", "5m"]);
         assert!(cli.daemon);
         assert_eq!(cli.max_duration, Some("5m".to_string()));
+    }
+
+    #[test]
+    fn cli_parses_standalone_max_duration() {
+        let cli = Cli::parse_from(["smart-scribe", "--max-duration", "5m"]);
+        assert!(!cli.daemon);
+        assert_eq!(cli.max_duration, Some("5m".to_string()));
+    }
+
+    #[test]
+    fn cli_rejects_duration_and_max_duration_together() {
+        assert!(
+            Cli::try_parse_from(["smart-scribe", "--duration", "10s", "--max-duration", "5m"])
+                .is_err()
+        );
     }
 
     #[test]
@@ -394,6 +446,18 @@ mod tests {
         let cli = Cli::parse_from(["smart-scribe", "-k", "--keystroke-tool", "xdotool"]);
         assert!(cli.keystroke);
         assert_eq!(cli.keystroke_tool, Some("xdotool".to_string()));
+    }
+
+    #[test]
+    fn cli_parses_daemon_subscribe() {
+        let cli = Cli::parse_from(["smart-scribe", "daemon", "subscribe", "--output", "json"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Daemon {
+                action: DaemonAction::Subscribe
+            })
+        ));
+        assert_eq!(cli.output, OutputFormatArg::Json);
     }
 
     #[test]

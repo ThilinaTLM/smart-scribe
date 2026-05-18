@@ -9,6 +9,7 @@ pub mod config_cmd;
 pub mod daemon_app;
 pub mod daemon_cmd;
 pub mod ipc;
+pub mod output;
 pub mod pid_file;
 pub mod presenter;
 pub mod signals;
@@ -20,7 +21,8 @@ pub use app::{run_oneshot, EXIT_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR};
 #[cfg(target_os = "linux")]
 pub use args::IndicatorPosition;
 pub use args::{
-    BackendArg, Cli, Commands, ConfigAction, DaemonAction, DaemonOptions, TranscribeOptions,
+    BackendArg, Cli, Commands, ConfigAction, DaemonAction, DaemonOptions, OutputFormatArg,
+    TranscribeOptions,
 };
 pub use daemon_app::run_daemon;
 pub use daemon_cmd::handle_daemon_command;

@@ -15,10 +15,12 @@ pub use named_pipe::{NamedPipeClient, NamedPipeServer, PipePath};
 pub use unix_socket::{SocketPath, UnixSocketClient, UnixSocketServer};
 
 use std::io;
+use tokio::io::AsyncBufRead;
 use tokio::sync::{broadcast, mpsc};
 
+use super::output::DaemonEvent;
 use super::signals::DaemonSignal;
-use crate::domain::daemon::{DaemonState, StateUpdate};
+use crate::domain::daemon::DaemonState;
 
 /// State function type for IPC servers
 pub type StateFn = Box<dyn Fn() -> DaemonState + Send + Sync>;
@@ -45,7 +47,7 @@ pub trait IpcServer: Send + Sync {
         tx: mpsc::Sender<DaemonSignal>,
         state_fn: StateFn,
         elapsed_fn: ElapsedFn,
-        state_rx: broadcast::Receiver<StateUpdate>,
+        event_rx: broadcast::Receiver<DaemonEvent>,
     ) -> io::Result<()>;
 
     /// Cleanup IPC resources
@@ -60,6 +62,9 @@ pub trait IpcClient: Send + Sync {
 
     /// Send a command and receive response
     async fn send_command(&self, cmd: &str) -> io::Result<String>;
+
+    /// Subscribe to streaming daemon events
+    async fn subscribe(&self) -> io::Result<Box<dyn AsyncBufRead + Unpin + Send>>;
 }
 
 /// Create the appropriate IPC server for the current platform

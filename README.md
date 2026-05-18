@@ -111,6 +111,7 @@ smart-scribe -d 30s              # 30 second recording
 smart-scribe -d 1m -c            # 1 minute, copy to clipboard
 smart-scribe -d 2m -D dev -k     # 2 minutes, dev domain, type result
 smart-scribe -c -k -n            # All outputs: clipboard + keystroke + notify
+smart-scribe --output json       # Machine-readable one-shot output
 ```
 
 ### Daemon Mode
@@ -126,9 +127,54 @@ smart-scribe --daemon -D dev     # With dev domain preset
 smart-scribe daemon toggle       # Start/stop recording
 smart-scribe daemon cancel       # Cancel current recording
 smart-scribe daemon status       # Show state (idle/recording/processing)
+smart-scribe --output json daemon status
+smart-scribe --output json daemon subscribe   # Stream daemon events as NDJSON
 ```
 
 Bind `smart-scribe daemon toggle` to a hotkey for push-to-talk.
+
+### JSON Output
+
+Use `--output json` when another program needs structured output.
+
+**One-shot result:**
+
+```bash
+smart-scribe --output json -d 10s
+```
+
+Example stdout:
+
+```json
+{"ok":true,"mode":"oneshot","text":"hello world","audio_size":"84 KB","clipboard_copied":false,"keystroke_sent":false,"paste_sent":false}
+```
+
+**Daemon status:**
+
+```bash
+smart-scribe --output json daemon status
+```
+
+Example stdout:
+
+```json
+{"ok":true,"command":"status","state":"recording","elapsed_ms":1532}
+```
+
+**Daemon event stream:**
+
+```bash
+smart-scribe --output json daemon subscribe
+```
+
+This emits newline-delimited JSON (NDJSON / JSONL), for example:
+
+```json
+{"type":"state","state":"recording","elapsed_ms":1500}
+{"type":"result","text":"hello world","audio_size":"84 KB","clipboard_copied":false,"keystroke_sent":false,"paste_sent":false}
+```
+
+If you start the daemon itself with `--output json`, completed transcriptions written by the daemon process are also emitted as JSON instead of bare text.
 
 ### Domain Presets (Gemini only)
 
@@ -166,6 +212,7 @@ smart-scribe config path              # Show config file location
 
 | Option                          | Description                          | Default |
 | ------------------------------- | ------------------------------------ | ------- |
+| `--output <FORMAT>`             | Output format (`text`, `json`)       | text    |
 | `--backend <BACKEND>`           | Transcription backend (gemini, chatgpt) | gemini  |
 | `-d, --duration <TIME>`         | Recording duration (10s, 1m, 2m30s)  | 10s     |
 | `-D, --domain <DOMAIN>`         | Domain preset (Gemini only)          | general |

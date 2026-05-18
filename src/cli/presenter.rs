@@ -6,20 +6,35 @@ use std::sync::Arc;
 
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
+use serde::Serialize;
+
+use super::args::OutputFormatArg;
 
 /// Presenter for CLI output formatting
 pub struct Presenter {
+    output_format: OutputFormatArg,
     spinner: Option<ProgressBar>,
     is_spinner_active: Arc<AtomicBool>,
 }
 
 impl Presenter {
     /// Create a new presenter
-    pub fn new() -> Self {
+    pub fn new(output_format: OutputFormatArg) -> Self {
         Self {
+            output_format,
             spinner: None,
             is_spinner_active: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Selected output format
+    pub const fn output_format(&self) -> OutputFormatArg {
+        self.output_format
+    }
+
+    /// Whether machine-readable JSON output is enabled
+    pub const fn is_json(&self) -> bool {
+        self.output_format.is_json()
     }
 
     /// Start a spinner with message
@@ -88,14 +103,30 @@ impl Presenter {
         eprintln!("{} {}", "✗".red(), message);
     }
 
-    /// Output text to stdout (the actual transcription output)
+    /// Output text to stdout
     pub fn output(&self, text: &str) {
         println!("{}", text);
+    }
+
+    /// Output JSON to stdout
+    pub fn output_json<T: Serialize>(&self, value: &T) {
+        match serde_json::to_string(value) {
+            Ok(json) => println!("{}", json),
+            Err(e) => {
+                self.error(&format!("Failed to serialize JSON output: {}", e));
+            }
+        }
     }
 
     /// Output text to stdout without newline
     pub fn output_inline(&self, text: &str) {
         print!("{}", text);
+        let _ = io::stdout().flush();
+    }
+
+    /// Output raw bytes already encoded as a single line
+    pub fn output_line(&self, line: &str) {
+        print!("{}", line);
         let _ = io::stdout().flush();
     }
 
@@ -147,7 +178,7 @@ impl Presenter {
 
 impl Default for Presenter {
     fn default() -> Self {
-        Self::new()
+        Self::new(OutputFormatArg::Text)
     }
 }
 
@@ -157,22 +188,28 @@ mod tests {
 
     #[test]
     fn format_progress_at_start() {
-        let presenter = Presenter::new();
+        let presenter = Presenter::new(OutputFormatArg::Text);
         let progress = presenter.format_progress(0, 10000);
         assert!(progress.contains("0s / 10s"));
     }
 
     #[test]
     fn format_progress_at_half() {
-        let presenter = Presenter::new();
+        let presenter = Presenter::new(OutputFormatArg::Text);
         let progress = presenter.format_progress(5000, 10000);
         assert!(progress.contains("5s / 10s"));
     }
 
     #[test]
     fn format_progress_at_end() {
-        let presenter = Presenter::new();
+        let presenter = Presenter::new(OutputFormatArg::Text);
         let progress = presenter.format_progress(10000, 10000);
         assert!(progress.contains("10s / 10s"));
+    }
+
+    #[test]
+    fn presenter_tracks_json_mode() {
+        let presenter = Presenter::new(OutputFormatArg::Json);
+        assert!(presenter.is_json());
     }
 }

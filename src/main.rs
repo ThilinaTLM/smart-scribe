@@ -22,7 +22,7 @@ use smart_scribe::infrastructure::XdgConfigStore;
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    let presenter = Presenter::new();
+    let presenter = Presenter::new(cli.output);
 
     // Handle subcommands
     match cli.command {
@@ -130,6 +130,7 @@ async fn main() -> ExitCode {
             .unwrap_or_default();
 
         let options = DaemonOptions {
+            output: cli.output,
             max_duration,
             domain: config.domain_or_default(),
             clipboard: config.clipboard_or_default(),
@@ -147,20 +148,34 @@ async fn main() -> ExitCode {
 
         run_daemon(options, &config).await
     } else {
-        // Parse duration
+        // Parse optional fixed duration for foreground mode
         let duration = match config.duration.as_ref() {
             Some(s) => match s.parse::<Duration>() {
-                Ok(d) => d,
+                Ok(d) => Some(d),
                 Err(e) => {
                     presenter.error(&format!("Invalid duration: {}", e));
                     return ExitCode::from(EXIT_USAGE_ERROR);
                 }
             },
-            None => Duration::default_duration(),
+            None => None,
+        };
+
+        // Parse optional safety cap for dynamic foreground mode
+        let max_duration = match config.max_duration.as_ref() {
+            Some(s) => match s.parse::<Duration>() {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    presenter.error(&format!("Invalid max-duration: {}", e));
+                    return ExitCode::from(EXIT_USAGE_ERROR);
+                }
+            },
+            None => None,
         };
 
         let options = TranscribeOptions {
+            output: cli.output,
             duration,
+            max_duration,
             domain: config.domain_or_default(),
             clipboard: config.clipboard_or_default(),
             keystroke: config.keystroke_or_default(),

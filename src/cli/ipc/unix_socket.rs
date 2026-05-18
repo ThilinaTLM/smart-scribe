@@ -7,13 +7,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 
 use super::{ElapsedFn, IpcClient, IpcServer, StateFn};
+use crate::cli::output::{DaemonEvent, DaemonStatusPayload};
 use crate::cli::signals::DaemonSignal;
-use crate::domain::daemon::{DaemonState, StateUpdate};
+use crate::domain::daemon::DaemonState;
 
 /// Socket path resolver
 #[derive(Debug, Clone)]
@@ -98,7 +99,7 @@ impl IpcServer for UnixSocketServer {
         tx: mpsc::Sender<DaemonSignal>,
         state_fn: StateFn,
         elapsed_fn: ElapsedFn,
-        state_rx: broadcast::Receiver<StateUpdate>,
+        event_rx: broadcast::Receiver<DaemonEvent>,
     ) -> io::Result<()> {
         let listener = self
             .listener
@@ -115,10 +116,10 @@ impl IpcServer for UnixSocketServer {
                     let tx = tx.clone();
                     let state_fn = Arc::clone(&state_fn);
                     let elapsed_fn = Arc::clone(&elapsed_fn);
-                    let state_rx = state_rx.resubscribe();
+                    let event_rx = event_rx.resubscribe();
                     tokio::spawn(async move {
                         if let Err(e) =
-                            handle_connection(stream, tx, state_fn, elapsed_fn, state_rx).await
+                            handle_connection(stream, tx, state_fn, elapsed_fn, event_rx).await
                         {
                             // Don't log BrokenPipe errors - they're expected when clients disconnect
                             if e.kind() != io::ErrorKind::BrokenPipe {
@@ -145,7 +146,7 @@ async fn handle_connection(
     tx: mpsc::Sender<DaemonSignal>,
     state_fn: Arc<StateFn>,
     elapsed_fn: Arc<ElapsedFn>,
-    mut state_rx: broadcast::Receiver<StateUpdate>,
+    mut event_rx: broadcast::Receiver<DaemonEvent>,
 ) -> io::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -177,18 +178,25 @@ async fn handle_connection(
             writer.write_all(response.as_bytes()).await?;
             writer.flush().await?;
         }
+        "status-json" => {
+            let payload = DaemonStatusPayload {
+                state: state_fn(),
+                elapsed_ms: elapsed_fn(),
+            };
+            writer.write_all(payload.to_json_line().as_bytes()).await?;
+            writer.flush().await?;
+        }
         "subscribe" => {
             // Send initial state
-            let initial = StateUpdate::new(state_fn(), elapsed_fn());
+            let initial = DaemonEvent::state(state_fn(), elapsed_fn());
             writer.write_all(initial.to_json_line().as_bytes()).await?;
             writer.flush().await?;
 
-            // Stream state updates until client disconnects
+            // Stream events until client disconnects
             loop {
-                match state_rx.recv().await {
-                    Ok(update) => {
-                        if let Err(e) = writer.write_all(update.to_json_line().as_bytes()).await {
-                            // Client disconnected
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        if let Err(e) = writer.write_all(event.to_json_line().as_bytes()).await {
                             if e.kind() == io::ErrorKind::BrokenPipe {
                                 break;
                             }
@@ -203,8 +211,7 @@ async fn handle_connection(
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // Subscriber lagged behind, send current state to catch up
-                        let current = StateUpdate::new(state_fn(), elapsed_fn());
+                        let current = DaemonEvent::state(state_fn(), elapsed_fn());
                         if let Err(e) = writer.write_all(current.to_json_line().as_bytes()).await {
                             if e.kind() == io::ErrorKind::BrokenPipe {
                                 break;
@@ -256,6 +263,13 @@ impl IpcClient for UnixSocketClient {
         reader.read_line(&mut response).await?;
 
         Ok(response)
+    }
+
+    async fn subscribe(&self) -> io::Result<Box<dyn AsyncBufRead + Unpin + Send>> {
+        let mut stream = UnixStream::connect(self.socket_path.path()).await?;
+        stream.write_all(b"subscribe\n").await?;
+        stream.flush().await?;
+        Ok(Box::new(BufReader::new(stream)))
     }
 }
 
