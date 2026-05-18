@@ -52,6 +52,6 @@ mod tests {
 
     #[test]
     fn clipboard_default_creates() {
-        let _clipboard = ArboardClipboard::default();
+        let _clipboard = ArboardClipboard;
     }
 }
