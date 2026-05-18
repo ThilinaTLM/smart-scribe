@@ -276,8 +276,12 @@ pub struct DaemonOptions {
 /// Valid backend values
 pub const VALID_BACKENDS: &[&str] = &["gemini", "chatgpt"];
 
-/// Valid config keys (Linux includes indicator settings)
-#[cfg(target_os = "linux")]
+/// Valid config keys.
+///
+/// The TOML schema is intentionally portable: `AppConfig` always carries both
+/// `linux` and `windows` sub-tables on every platform, so the same config file
+/// can target multiple machines. Validation is platform-independent for that
+/// reason; runtime gating still applies the appropriate feature per OS.
 pub const VALID_CONFIG_KEYS: &[&str] = &[
     "api_key",
     "backend",
@@ -293,49 +297,19 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "linux.indicator",
     "linux.indicator_position",
     "linux.paste",
-];
-
-/// Valid config keys (Windows includes tray indicator settings)
-#[cfg(target_os = "windows")]
-pub const VALID_CONFIG_KEYS: &[&str] = &[
-    "api_key",
-    "backend",
-    "chatgpt_cookie_file",
-    "duration",
-    "max_duration",
-    "domain",
-    "clipboard",
-    "keystroke",
-    "notify",
-    "audio_cue",
     "windows.indicator",
     "windows.show_balloon",
 ];
 
-/// Valid config keys (other platforms, e.g. macOS)
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
-pub const VALID_CONFIG_KEYS: &[&str] = &[
-    "api_key",
-    "backend",
-    "chatgpt_cookie_file",
-    "duration",
-    "max_duration",
-    "domain",
-    "clipboard",
-    "keystroke",
-    "notify",
-    "audio_cue",
-];
-
-/// Valid keystroke tool values for all platforms
+/// Default keystroke tool name.
 pub const KEYSTROKE_TOOL_ENIGO: &str = "enigo";
 
-/// Valid keystroke tool values (platform-aware)
-#[cfg(target_os = "linux")]
+/// Valid keystroke tool values.
+///
+/// `enigo` works on every platform; the remaining tools are Linux-only at
+/// runtime but stay valid in the schema so a portable config can target Linux
+/// from Windows/macOS.
 pub const VALID_KEYSTROKE_TOOLS: &[&str] = &["enigo", "auto", "ydotool", "xdotool", "wtype"];
-
-#[cfg(not(target_os = "linux"))]
-pub const VALID_KEYSTROKE_TOOLS: &[&str] = &["enigo"];
 
 /// Check if a config key is valid
 pub fn is_valid_config_key(key: &str) -> bool {
@@ -449,22 +423,16 @@ mod tests {
 
     #[test]
     fn valid_config_keys() {
+        // Portable schema: every documented key is valid on every platform.
+        // Runtime gating still applies the appropriate feature per OS.
         assert!(is_valid_config_key("api_key"));
         assert!(is_valid_config_key("duration"));
-        #[cfg(target_os = "linux")]
         assert!(is_valid_config_key("linux.keystroke_tool"));
-        #[cfg(not(target_os = "linux"))]
-        assert!(!is_valid_config_key("linux.keystroke_tool"));
-        #[cfg(target_os = "windows")]
-        {
-            assert!(is_valid_config_key("windows.indicator"));
-            assert!(is_valid_config_key("windows.show_balloon"));
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            assert!(!is_valid_config_key("windows.indicator"));
-            assert!(!is_valid_config_key("windows.show_balloon"));
-        }
+        assert!(is_valid_config_key("linux.indicator"));
+        assert!(is_valid_config_key("linux.indicator_position"));
+        assert!(is_valid_config_key("linux.paste"));
+        assert!(is_valid_config_key("windows.indicator"));
+        assert!(is_valid_config_key("windows.show_balloon"));
         assert!(!is_valid_config_key("invalid_key"));
     }
 
