@@ -509,27 +509,19 @@ mod tests {
     }
 
     #[test]
-    fn validate_keystroke_tool_valid() {
+    fn validate_keystroke_tool_accepts_all_tools_on_all_platforms() {
+        // The TOML schema is portable: any tool name valid on any OS so a
+        // shared dotfile can target Linux from Windows/macOS. Runtime gating
+        // still applies the correct backend per platform.
         assert!(validate_config_value("linux.keystroke_tool", "enigo").is_ok());
-        #[cfg(target_os = "linux")]
-        {
-            assert!(validate_config_value("linux.keystroke_tool", "auto").is_ok());
-            assert!(validate_config_value("linux.keystroke_tool", "ydotool").is_ok());
-            assert!(validate_config_value("linux.keystroke_tool", "xdotool").is_ok());
-            assert!(validate_config_value("linux.keystroke_tool", "wtype").is_ok());
-        }
+        assert!(validate_config_value("linux.keystroke_tool", "auto").is_ok());
+        assert!(validate_config_value("linux.keystroke_tool", "ydotool").is_ok());
+        assert!(validate_config_value("linux.keystroke_tool", "xdotool").is_ok());
+        assert!(validate_config_value("linux.keystroke_tool", "wtype").is_ok());
     }
 
     #[test]
     fn validate_keystroke_tool_invalid() {
         assert!(validate_config_value("linux.keystroke_tool", "invalid").is_err());
-    }
-
-    #[test]
-    #[cfg(not(target_os = "linux"))]
-    fn validate_keystroke_tool_linux_only_invalid_on_other() {
-        // On non-Linux platforms, Linux-specific tools should be invalid
-        assert!(validate_config_value("linux.keystroke_tool", "auto").is_err());
-        assert!(validate_config_value("linux.keystroke_tool", "xdotool").is_err());
     }
 }

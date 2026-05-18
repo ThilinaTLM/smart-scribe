@@ -112,7 +112,8 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
         Box::new(NoOpSmartPaste::new())
     };
     #[cfg(not(target_os = "linux"))]
-    let smart_paste = Box::new(NoOpSmartPaste::new());
+    let smart_paste: Box<dyn crate::application::ports::SmartPaste> =
+        Box::new(NoOpSmartPaste::new());
 
     // Create daemon config
     #[cfg(target_os = "linux")]

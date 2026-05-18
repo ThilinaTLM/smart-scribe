@@ -139,7 +139,8 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
         Box::new(NoOpSmartPaste::new())
     };
     #[cfg(not(target_os = "linux"))]
-    let smart_paste = Box::new(NoOpSmartPaste::new());
+    let smart_paste: Box<dyn crate::application::ports::SmartPaste> =
+        Box::new(NoOpSmartPaste::new());
 
     // Create use case
     let use_case = TranscribeRecordingUseCase::new(

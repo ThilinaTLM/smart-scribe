@@ -101,6 +101,6 @@ mod tests {
 
     #[test]
     fn keystroke_default_creates() {
-        let _keystroke = EnigoKeystroke::default();
+        let _keystroke = EnigoKeystroke;
     }
 }
