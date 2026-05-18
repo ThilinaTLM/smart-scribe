@@ -11,11 +11,12 @@
 //! - **Application**: Use cases and port interfaces (traits)
 //! - **Infrastructure**: Adapter implementations (cpal, Gemini, clipboard, etc.)
 //! - **CLI**: Command-line interface, argument parsing, and signal handling
-//! - **GUI**: Recording indicator overlay (Linux only, uses Wayland layer-shell)
+//! - **GUI**: Recording indicator — Wayland layer-shell overlay on Linux,
+//!   system tray icon on Windows.
 
 pub mod application;
 pub mod cli;
 pub mod domain;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod gui;
 pub mod infrastructure;

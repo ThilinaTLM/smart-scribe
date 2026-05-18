@@ -16,6 +16,15 @@ pub struct LinuxConfig {
     pub paste: Option<bool>,
 }
 
+/// Windows-specific configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WindowsConfig {
+    /// Show system tray icon while the daemon is recording/processing.
+    pub indicator: Option<bool>,
+    /// Show Windows balloon notifications on state transitions.
+    pub show_balloon: Option<bool>,
+}
+
 /// Application configuration.
 /// All fields are optional to support partial configs and merging.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -31,6 +40,7 @@ pub struct AppConfig {
     pub notify: Option<bool>,
     pub audio_cue: Option<bool>,
     pub linux: Option<LinuxConfig>,
+    pub windows: Option<WindowsConfig>,
 }
 
 impl AppConfig {
@@ -52,6 +62,10 @@ impl AppConfig {
                 indicator: Some(false),
                 indicator_position: Some("top-right".to_string()),
                 paste: Some(false),
+            }),
+            windows: Some(WindowsConfig {
+                indicator: Some(false),
+                show_balloon: Some(false),
             }),
         }
     }
@@ -76,6 +90,7 @@ impl AppConfig {
             notify: other.notify.or(self.notify),
             audio_cue: other.audio_cue.or(self.audio_cue),
             linux: Self::merge_linux_config(self.linux, other.linux),
+            windows: Self::merge_windows_config(self.windows, other.windows),
         }
     }
 
@@ -93,6 +108,22 @@ impl AppConfig {
                 indicator: o.indicator.or(b.indicator),
                 indicator_position: o.indicator_position.or(b.indicator_position),
                 paste: o.paste.or(b.paste),
+            }),
+        }
+    }
+
+    /// Merge Windows config sections
+    fn merge_windows_config(
+        base: Option<WindowsConfig>,
+        other: Option<WindowsConfig>,
+    ) -> Option<WindowsConfig> {
+        match (base, other) {
+            (None, None) => None,
+            (Some(b), None) => Some(b),
+            (None, Some(o)) => Some(o),
+            (Some(b), Some(o)) => Some(WindowsConfig {
+                indicator: o.indicator.or(b.indicator),
+                show_balloon: o.show_balloon.or(b.show_balloon),
             }),
         }
     }
@@ -189,6 +220,24 @@ impl AppConfig {
             .and_then(|l| l.keystroke_tool.as_deref())
             .unwrap_or("enigo")
     }
+
+    /// Get indicator setting, or false if not set (Windows only)
+    #[cfg(target_os = "windows")]
+    pub fn indicator_or_default(&self) -> bool {
+        self.windows
+            .as_ref()
+            .and_then(|w| w.indicator)
+            .unwrap_or(false)
+    }
+
+    /// Get balloon-notification setting, or false if not set (Windows only)
+    #[cfg(target_os = "windows")]
+    pub fn show_balloon_or_default(&self) -> bool {
+        self.windows
+            .as_ref()
+            .and_then(|w| w.show_balloon)
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
@@ -211,6 +260,10 @@ mod tests {
         let linux = config.linux.as_ref().unwrap();
         assert_eq!(linux.indicator, Some(false));
         assert_eq!(linux.indicator_position, Some("top-right".to_string()));
+        // Windows-specific defaults
+        let windows = config.windows.as_ref().unwrap();
+        assert_eq!(windows.indicator, Some(false));
+        assert_eq!(windows.show_balloon, Some(false));
     }
 
     #[test]
@@ -221,6 +274,7 @@ mod tests {
         assert!(config.domain.is_none());
         assert!(config.clipboard.is_none());
         assert!(config.linux.is_none());
+        assert!(config.windows.is_none());
     }
 
     #[test]
@@ -389,6 +443,50 @@ mod tests {
         let other = AppConfig::empty();
         let merged = base.merge(other);
         assert_eq!(merged.keystroke_tool_or_default(), "ydotool");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn windows_indicator_or_default_returns_false() {
+        let config = AppConfig::empty();
+        assert!(!config.indicator_or_default());
+        assert!(!config.show_balloon_or_default());
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn windows_indicator_or_default_returns_configured() {
+        let config = AppConfig {
+            windows: Some(WindowsConfig {
+                indicator: Some(true),
+                show_balloon: Some(true),
+            }),
+            ..Default::default()
+        };
+        assert!(config.indicator_or_default());
+        assert!(config.show_balloon_or_default());
+    }
+
+    #[test]
+    fn merge_windows_config_indicator_field() {
+        let base = AppConfig {
+            windows: Some(WindowsConfig {
+                indicator: Some(false),
+                show_balloon: Some(false),
+            }),
+            ..Default::default()
+        };
+        let other = AppConfig {
+            windows: Some(WindowsConfig {
+                indicator: Some(true),
+                show_balloon: None,
+            }),
+            ..Default::default()
+        };
+        let merged = base.merge(other);
+        let w = merged.windows.as_ref().unwrap();
+        assert_eq!(w.indicator, Some(true));
+        assert_eq!(w.show_balloon, Some(false));
     }
 
     #[test]

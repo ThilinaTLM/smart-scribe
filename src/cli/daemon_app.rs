@@ -168,7 +168,7 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
     let (state_tx, _state_rx) = broadcast::channel::<StateUpdate>(STATE_BROADCAST_CAPACITY);
     let (event_tx, event_rx) = broadcast::channel::<DaemonEvent>(STATE_BROADCAST_CAPACITY);
 
-    // Spawn indicator thread if enabled (Linux only, requires Wayland)
+    // Spawn indicator thread if enabled (platform-specific UI).
     #[cfg(target_os = "linux")]
     if options.indicator {
         let indicator_rx = state_tx.subscribe();
@@ -182,6 +182,18 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
             }
         });
         presenter.info("Indicator overlay enabled");
+    }
+
+    #[cfg(target_os = "windows")]
+    if options.indicator {
+        let indicator_rx = state_tx.subscribe();
+        let signal_tx_for_tray = signal_tx.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = crate::gui::run_indicator(indicator_rx, signal_tx_for_tray) {
+                eprintln!("Indicator error: {} (tray icon unavailable)", e);
+            }
+        });
+        presenter.info("Tray indicator enabled");
     }
 
     // Spawn IPC server task

@@ -72,8 +72,8 @@ pub struct Cli {
     #[arg(long, value_name = "TIME", conflicts_with = "duration")]
     pub max_duration: Option<String>,
 
-    /// Show recording indicator overlay (daemon mode only, Linux/Wayland)
-    #[cfg(target_os = "linux")]
+    /// Show recording indicator (daemon mode only; Wayland overlay on Linux, system tray on Windows)
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[arg(long, requires = "daemon")]
     pub indicator: bool,
 
@@ -267,7 +267,7 @@ pub struct DaemonOptions {
     pub paste: bool,
     pub notify: bool,
     pub audio_cue: bool,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub indicator: bool,
     #[cfg(target_os = "linux")]
     pub indicator_position: IndicatorPosition,
@@ -295,8 +295,25 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "linux.paste",
 ];
 
-/// Valid config keys (non-Linux)
-#[cfg(not(target_os = "linux"))]
+/// Valid config keys (Windows includes tray indicator settings)
+#[cfg(target_os = "windows")]
+pub const VALID_CONFIG_KEYS: &[&str] = &[
+    "api_key",
+    "backend",
+    "chatgpt_cookie_file",
+    "duration",
+    "max_duration",
+    "domain",
+    "clipboard",
+    "keystroke",
+    "notify",
+    "audio_cue",
+    "windows.indicator",
+    "windows.show_balloon",
+];
+
+/// Valid config keys (other platforms, e.g. macOS)
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub const VALID_CONFIG_KEYS: &[&str] = &[
     "api_key",
     "backend",
@@ -438,6 +455,16 @@ mod tests {
         assert!(is_valid_config_key("linux.keystroke_tool"));
         #[cfg(not(target_os = "linux"))]
         assert!(!is_valid_config_key("linux.keystroke_tool"));
+        #[cfg(target_os = "windows")]
+        {
+            assert!(is_valid_config_key("windows.indicator"));
+            assert!(is_valid_config_key("windows.show_balloon"));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(!is_valid_config_key("windows.indicator"));
+            assert!(!is_valid_config_key("windows.show_balloon"));
+        }
         assert!(!is_valid_config_key("invalid_key"));
     }
 

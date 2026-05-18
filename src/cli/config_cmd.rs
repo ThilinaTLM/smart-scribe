@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::application::ports::ConfigStore;
-use crate::domain::config::LinuxConfig;
+use crate::domain::config::{LinuxConfig, WindowsConfig};
 use crate::domain::error::ConfigError;
 use crate::domain::transcription::DomainId;
 
@@ -140,6 +140,30 @@ async fn handle_set<S: ConfigStore>(
                     })?);
             }
         }
+        "windows.indicator" => {
+            if config.windows.is_none() {
+                config.windows = Some(WindowsConfig::default());
+            }
+            if let Some(ref mut windows) = config.windows {
+                windows.indicator =
+                    Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                        key: key.to_string(),
+                        message: "Value must be 'true' or 'false'".to_string(),
+                    })?);
+            }
+        }
+        "windows.show_balloon" => {
+            if config.windows.is_none() {
+                config.windows = Some(WindowsConfig::default());
+            }
+            if let Some(ref mut windows) = config.windows {
+                windows.show_balloon =
+                    Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
+                        key: key.to_string(),
+                        message: "Value must be 'true' or 'false'".to_string(),
+                    })?);
+            }
+        }
         _ => unreachable!(), // Already validated
     }
 
@@ -199,6 +223,16 @@ async fn handle_get<S: ConfigStore>(
             .linux
             .as_ref()
             .and_then(|l| l.paste)
+            .map(|b| b.to_string()),
+        "windows.indicator" => config
+            .windows
+            .as_ref()
+            .and_then(|w| w.indicator)
+            .map(|b| b.to_string()),
+        "windows.show_balloon" => config
+            .windows
+            .as_ref()
+            .and_then(|w| w.show_balloon)
             .map(|b| b.to_string()),
         _ => unreachable!(),
     };
@@ -276,6 +310,22 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
                 .and_then(|l| l.paste)
                 .map(|b| b.to_string()),
         ),
+        (
+            "windows.indicator".to_string(),
+            config
+                .windows
+                .as_ref()
+                .and_then(|w| w.indicator)
+                .map(|b| b.to_string()),
+        ),
+        (
+            "windows.show_balloon".to_string(),
+            config
+                .windows
+                .as_ref()
+                .and_then(|w| w.show_balloon)
+                .map(|b| b.to_string()),
+        ),
     ]);
 
     if presenter.is_json() {
@@ -338,7 +388,13 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                     message: e.to_string(),
                 })?;
         }
-        "clipboard" | "keystroke" | "notify" | "audio_cue" | "linux.paste" => {
+        "clipboard"
+        | "keystroke"
+        | "notify"
+        | "audio_cue"
+        | "linux.paste"
+        | "windows.indicator"
+        | "windows.show_balloon" => {
             parse_bool(value).map_err(|_| ConfigError::ValidationError {
                 key: key.to_string(),
                 message: "Value must be 'true' or 'false'".to_string(),

@@ -15,7 +15,11 @@ use smart_scribe::cli::{
     presenter::Presenter,
     DaemonOptions, TranscribeOptions,
 };
-use smart_scribe::domain::config::{AppConfig, LinuxConfig};
+use smart_scribe::domain::config::AppConfig;
+#[cfg(target_os = "linux")]
+use smart_scribe::domain::config::LinuxConfig;
+#[cfg(target_os = "windows")]
+use smart_scribe::domain::config::WindowsConfig;
 use smart_scribe::domain::recording::Duration;
 use smart_scribe::infrastructure::XdgConfigStore;
 
@@ -81,10 +85,36 @@ async fn main() -> ExitCode {
             notify: if cli.notify { Some(true) } else { None },
             audio_cue: if cli.audio_cue { Some(true) } else { None },
             linux,
+            windows: None,
         }
     };
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    let cli_config = {
+        let windows = Some(WindowsConfig {
+            indicator: if cli.indicator { Some(true) } else { None },
+            show_balloon: None,
+        });
+
+        AppConfig {
+            api_key: None, // API key comes from env/file only
+            backend: cli.backend.map(|b| b.to_string()),
+            chatgpt_cookie_file: cli.chatgpt_cookie_file.clone(),
+            duration: cli.duration.clone(),
+            max_duration: cli.max_duration.clone(),
+            domain: cli
+                .domain
+                .map(|d| smart_scribe::domain::transcription::DomainId::from(d).to_string()),
+            clipboard: if cli.clipboard { Some(true) } else { None },
+            keystroke: if cli.keystroke { Some(true) } else { None },
+            notify: if cli.notify { Some(true) } else { None },
+            audio_cue: if cli.audio_cue { Some(true) } else { None },
+            linux: None,
+            windows,
+        }
+    };
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let cli_config = AppConfig {
         api_key: None, // API key comes from env/file only
         backend: cli.backend.map(|b| b.to_string()),
@@ -99,6 +129,7 @@ async fn main() -> ExitCode {
         notify: if cli.notify { Some(true) } else { None },
         audio_cue: if cli.audio_cue { Some(true) } else { None },
         linux: None,
+        windows: None,
     };
 
     // Merge config
@@ -140,7 +171,7 @@ async fn main() -> ExitCode {
             paste: config.paste_or_default(),
             notify: config.notify_or_default(),
             audio_cue: config.audio_cue_or_default(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             indicator: config.indicator_or_default(),
             #[cfg(target_os = "linux")]
             indicator_position,

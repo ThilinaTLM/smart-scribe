@@ -2,4 +2,4 @@
 
 mod app_config;
 
-pub use app_config::{AppConfig, LinuxConfig};
+pub use app_config::{AppConfig, LinuxConfig, WindowsConfig};
