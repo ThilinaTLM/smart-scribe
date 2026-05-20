@@ -76,6 +76,61 @@ function Get-NormalizedVersion {
     return $Version -replace '^v', ''
 }
 
+function Install-Binary {
+    param(
+        [string]$SourcePath,
+        [string]$DestinationPath
+    )
+
+    # Clean up any stale .old file left over from a previous update where the
+    # binary was still loaded and couldn't be deleted immediately.
+    $oldPath = "$DestinationPath.old"
+    if (Test-Path $oldPath) {
+        Remove-Item -Path $oldPath -Force -ErrorAction SilentlyContinue
+    }
+
+    # Fresh install: nothing to replace, just move.
+    if (-not (Test-Path $DestinationPath)) {
+        Move-Item -Path $SourcePath -Destination $DestinationPath -Force
+        return
+    }
+
+    # Try a direct overwrite first. This works when the existing binary isn't
+    # currently loaded by any process.
+    try {
+        Move-Item -Path $SourcePath -Destination $DestinationPath -Force -ErrorAction Stop
+        return
+    }
+    catch {
+        # The existing binary is in use (daemon running, open in another shell,
+        # AV scanning, etc.). On Windows a running .exe can be renamed but not
+        # overwritten, so move it aside and install the new one in its place.
+        Write-Info "Existing binary is in use; swapping via rename..."
+    }
+
+    try {
+        Move-Item -Path $DestinationPath -Destination $oldPath -Force -ErrorAction Stop
+    }
+    catch {
+        Remove-Item -Path $SourcePath -ErrorAction SilentlyContinue
+        Write-Error "Failed to replace existing binary at ${DestinationPath}: $_`nIf smart-scribe is running (e.g. as a daemon), stop it and re-run the installer."
+    }
+
+    try {
+        Move-Item -Path $SourcePath -Destination $DestinationPath -Force -ErrorAction Stop
+    }
+    catch {
+        # Best effort: restore the previous binary so the user isn't left empty-handed.
+        Move-Item -Path $oldPath -Destination $DestinationPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $SourcePath -ErrorAction SilentlyContinue
+        Write-Error "Failed to install new binary: $_"
+    }
+
+    # Try to remove the old binary now. If it's still loaded the delete will
+    # fail; in that case it'll be cleaned up on the next install run.
+    Remove-Item -Path $oldPath -Force -ErrorAction SilentlyContinue
+}
+
 function Add-ToPath {
     param([string]$Directory)
 
@@ -163,7 +218,13 @@ function Main {
     $binaryPath = Join-Path $installPath $BinaryName
     Write-Info "Installing to $binaryPath"
 
-    Move-Item -Path $tempFile -Destination $binaryPath -Force
+    try {
+        Install-Binary -SourcePath $tempFile -DestinationPath $binaryPath
+    }
+    catch {
+        Remove-Item -Path $tempFile -ErrorAction SilentlyContinue
+        throw
+    }
 
     # Verify installation
     if (Test-Path $binaryPath) {
