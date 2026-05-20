@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod args;
+pub mod auth_cmd;
 pub mod config_cmd;
 pub mod daemon_app;
 pub mod daemon_cmd;
@@ -21,7 +22,7 @@ pub use app::{run_oneshot, EXIT_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR};
 #[cfg(target_os = "linux")]
 pub use args::IndicatorPosition;
 pub use args::{
-    BackendArg, Cli, Commands, ConfigAction, DaemonAction, DaemonOptions, OutputFormatArg,
+    AuthAction, Cli, Commands, ConfigAction, DaemonAction, DaemonOptions, OutputFormatArg,
     TranscribeOptions,
 };
 pub use daemon_app::run_daemon;

@@ -8,7 +8,8 @@ use clap::Parser;
 use smart_scribe::cli::IndicatorPosition;
 use smart_scribe::cli::{
     app::{load_merged_config, run_oneshot, EXIT_ERROR, EXIT_USAGE_ERROR},
-    args::{Cli, Commands},
+    args::{AuthAction, Cli, Commands},
+    auth_cmd::{run_auth_status, run_login, run_logout},
     config_cmd::handle_config_command,
     daemon_app::run_daemon,
     daemon_cmd::handle_daemon_command,
@@ -45,6 +46,18 @@ async fn main() -> ExitCode {
             }
             return ExitCode::SUCCESS;
         }
+        Some(Commands::Login { from_codex }) => {
+            return run_login(from_codex, cli.output).await;
+        }
+        Some(Commands::Logout) => {
+            return run_logout(cli.output).await;
+        }
+        Some(Commands::Auth {
+            action: AuthAction::Status,
+        }) => {
+            let config = load_merged_config(AppConfig::empty()).await;
+            return run_auth_status(&config, cli.output).await;
+        }
         None => {}
     }
 
@@ -72,14 +85,11 @@ async fn main() -> ExitCode {
         });
 
         AppConfig {
-            api_key: None, // API key comes from env/file only
-            backend: cli.backend.map(|b| b.to_string()),
-            chatgpt_cookie_file: cli.chatgpt_cookie_file.clone(),
+            auth: None,
+            openai_api_key: None,
+            openai_transcribe_model: None,
             duration: cli.duration.clone(),
             max_duration: cli.max_duration.clone(),
-            domain: cli
-                .domain
-                .map(|d| smart_scribe::domain::transcription::DomainId::from(d).to_string()),
             clipboard: if cli.clipboard { Some(true) } else { None },
             keystroke: if cli.keystroke { Some(true) } else { None },
             notify: if cli.notify { Some(true) } else { None },
@@ -97,14 +107,11 @@ async fn main() -> ExitCode {
         });
 
         AppConfig {
-            api_key: None, // API key comes from env/file only
-            backend: cli.backend.map(|b| b.to_string()),
-            chatgpt_cookie_file: cli.chatgpt_cookie_file.clone(),
+            auth: None,
+            openai_api_key: None,
+            openai_transcribe_model: None,
             duration: cli.duration.clone(),
             max_duration: cli.max_duration.clone(),
-            domain: cli
-                .domain
-                .map(|d| smart_scribe::domain::transcription::DomainId::from(d).to_string()),
             clipboard: if cli.clipboard { Some(true) } else { None },
             keystroke: if cli.keystroke { Some(true) } else { None },
             notify: if cli.notify { Some(true) } else { None },
@@ -116,14 +123,11 @@ async fn main() -> ExitCode {
 
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let cli_config = AppConfig {
-        api_key: None, // API key comes from env/file only
-        backend: cli.backend.map(|b| b.to_string()),
-        chatgpt_cookie_file: cli.chatgpt_cookie_file.clone(),
+        auth: None,
+        openai_api_key: None,
+        openai_transcribe_model: None,
         duration: cli.duration.clone(),
         max_duration: cli.max_duration.clone(),
-        domain: cli
-            .domain
-            .map(|d| smart_scribe::domain::transcription::DomainId::from(d).to_string()),
         clipboard: if cli.clipboard { Some(true) } else { None },
         keystroke: if cli.keystroke { Some(true) } else { None },
         notify: if cli.notify { Some(true) } else { None },
@@ -134,11 +138,6 @@ async fn main() -> ExitCode {
 
     // Merge config
     let config = load_merged_config(cli_config).await;
-
-    // Warn if domain preset used with chatgpt backend
-    if cli.domain.is_some() && config.backend_or_default() == "chatgpt" {
-        eprintln!("Warning: Domain presets (-D) are not supported with the ChatGPT backend and will be ignored");
-    }
 
     // Route to appropriate handler
     if cli.daemon {
@@ -163,7 +162,6 @@ async fn main() -> ExitCode {
         let options = DaemonOptions {
             output: cli.output,
             max_duration,
-            domain: config.domain_or_default(),
             clipboard: config.clipboard_or_default(),
             keystroke: config.keystroke_or_default(),
             keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),
@@ -207,7 +205,6 @@ async fn main() -> ExitCode {
             output: cli.output,
             duration,
             max_duration,
-            domain: config.domain_or_default(),
             clipboard: config.clipboard_or_default(),
             keystroke: config.keystroke_or_default(),
             keystroke_tool: Some(config.keystroke_tool_or_default().to_string()),

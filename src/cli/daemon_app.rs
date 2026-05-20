@@ -122,7 +122,6 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
     let enable_paste = false;
 
     let config = DaemonConfig {
-        domain: options.domain,
         max_duration: options.max_duration,
         enable_clipboard: options.clipboard,
         enable_keystroke: options.keystroke,

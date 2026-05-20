@@ -1,7 +1,7 @@
 //! Recording infrastructure module
 //!
 //! Provides cross-platform audio recording using cpal.
-//! Audio is encoded to FLAC format for lossless, Gemini-compatible output.
+//! Audio is encoded to FLAC for upload to the transcription backend.
 
 mod cpal_recorder;
 mod flac_encoder;

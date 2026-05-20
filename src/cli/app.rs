@@ -12,13 +12,13 @@ use crate::application::ports::{
     AudioCue, AudioCueType, ConfigStore, Transcriber, TranscriptionError,
 };
 use crate::application::{TranscribeCallbacks, TranscribeInput, TranscribeRecordingUseCase};
-use crate::domain::config::AppConfig;
+use crate::domain::config::{AppConfig, AuthMode};
 use crate::domain::recording::Duration;
-use crate::domain::transcription::{AudioData, SystemPrompt};
+use crate::domain::transcription::AudioData;
 use crate::infrastructure::{
     create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
-    create_smart_paste, ChatGptTranscriber, GeminiTranscriber, KeystrokeToolPreference,
-    NoOpKeystroke, NoOpSmartPaste, XdgConfigStore,
+    create_smart_paste, ChatGptOAuthTranscriber, KeystrokeToolPreference, NoOpKeystroke,
+    NoOpSmartPaste, OAuthStore, OpenAiApiTranscriber, XdgConfigStore,
 };
 
 use super::args::TranscribeOptions;
@@ -29,47 +29,44 @@ use super::signals::DaemonSignalHandler;
 /// Poll interval for foreground recording updates.
 const FOREGROUND_POLL_MS: u64 = 200;
 
-/// Enum wrapper for dynamic backend dispatch
+/// Enum wrapper for dynamic backend dispatch.
 pub enum AnyTranscriber {
-    Gemini(GeminiTranscriber),
-    ChatGpt(ChatGptTranscriber),
+    Oauth(ChatGptOAuthTranscriber),
+    ApiKey(OpenAiApiTranscriber),
 }
 
 #[async_trait]
 impl Transcriber for AnyTranscriber {
-    async fn transcribe(
-        &self,
-        audio: &AudioData,
-        prompt: &SystemPrompt,
-    ) -> Result<String, TranscriptionError> {
+    async fn transcribe(&self, audio: &AudioData) -> Result<String, TranscriptionError> {
         match self {
-            AnyTranscriber::Gemini(t) => t.transcribe(audio, prompt).await,
-            AnyTranscriber::ChatGpt(t) => t.transcribe(audio, prompt).await,
+            AnyTranscriber::Oauth(t) => t.transcribe(audio).await,
+            AnyTranscriber::ApiKey(t) => t.transcribe(audio).await,
         }
     }
 }
 
-/// Create a transcriber based on the merged config
+/// Create a transcriber based on the merged config.
+///
+/// For OAuth mode we construct the transcriber even if no token is yet on
+/// disk — the missing-token error is surfaced at the first transcribe call so
+/// that `smart-scribe login` can still be used to populate it.
 pub fn create_transcriber(config: &AppConfig) -> Result<AnyTranscriber, String> {
-    match config.backend_or_default() {
-        "chatgpt" => {
-            let cookie_file = config.chatgpt_cookie_file_or_default();
-            if !cookie_file.exists() {
-                return Err(format!(
-                    "ChatGPT cookie file not found: {}\nExport cookies from your browser to this file.",
-                    cookie_file.display()
-                ));
-            }
-            Ok(AnyTranscriber::ChatGpt(ChatGptTranscriber::new(
-                cookie_file,
-            )))
+    match config.auth_or_default() {
+        AuthMode::Oauth => {
+            let store = OAuthStore::new()
+                .map_err(|e| format!("Could not initialize OAuth token store: {e}"))?;
+            Ok(AnyTranscriber::Oauth(ChatGptOAuthTranscriber::new(store)))
         }
-        _ => {
-            // Gemini (default)
-            let api_key = config.api_key.as_ref().ok_or_else(|| {
-                "Missing API key. Set GEMINI_API_KEY environment variable or run 'smart-scribe config set api_key <key>'".to_string()
+        AuthMode::ApiKey => {
+            let api_key = config.openai_api_key.as_ref().ok_or_else(|| {
+                "Missing OpenAI API key. Set OPENAI_API_KEY or run \
+                 'smart-scribe config set openai_api_key <key>'."
+                    .to_string()
             })?;
-            Ok(AnyTranscriber::Gemini(GeminiTranscriber::new(api_key)))
+            let model = config.openai_transcribe_model_or_default().to_string();
+            Ok(AnyTranscriber::ApiKey(OpenAiApiTranscriber::new(
+                api_key, model,
+            )))
         }
     }
 }
@@ -165,7 +162,6 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
         Some(duration) => {
             let input = TranscribeInput {
                 duration,
-                domain: options.domain,
                 enable_clipboard: options.clipboard,
                 enable_keystroke: options.keystroke,
                 enable_paste,
@@ -186,7 +182,6 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                 duration: options
                     .max_duration
                     .unwrap_or_else(Duration::default_duration),
-                domain: options.domain,
                 enable_clipboard: options.clipboard,
                 enable_keystroke: options.keystroke,
                 enable_paste,
@@ -396,21 +391,21 @@ fn present_output(presenter: &Presenter, output: crate::application::TranscribeO
     ExitCode::from(EXIT_SUCCESS)
 }
 
-/// Get API key from environment or config file
-pub async fn get_api_key() -> Result<String, String> {
-    // Check environment first
-    if let Ok(key) = env::var("GEMINI_API_KEY") {
+/// Get the OpenAI API key from environment or config file (for `auth = api_key`).
+pub async fn get_openai_api_key() -> Result<String, String> {
+    if let Ok(key) = env::var("OPENAI_API_KEY") {
         if !key.is_empty() {
             return Ok(key);
         }
     }
 
-    // Check config file
     let store = XdgConfigStore::new();
     let config = store.load().await.unwrap_or_else(|_| AppConfig::empty());
 
-    config.api_key.ok_or_else(|| {
-        "Missing API key. Set GEMINI_API_KEY environment variable or run 'smart-scribe config set api_key <key>'".to_string()
+    config.openai_api_key.ok_or_else(|| {
+        "Missing OpenAI API key. Set OPENAI_API_KEY or run \
+         'smart-scribe config set openai_api_key <key>'."
+            .to_string()
     })
 }
 
@@ -421,10 +416,7 @@ pub async fn load_merged_config(cli_config: AppConfig) -> AppConfig {
 
     // Build env config
     let env_config = AppConfig {
-        api_key: env::var("GEMINI_API_KEY").ok().filter(|s| !s.is_empty()),
-        chatgpt_cookie_file: env::var("CHATGPT_COOKIE_FILE")
-            .ok()
-            .filter(|s| !s.is_empty()),
+        openai_api_key: env::var("OPENAI_API_KEY").ok().filter(|s| !s.is_empty()),
         ..Default::default()
     };
 

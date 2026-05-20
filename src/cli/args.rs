@@ -4,7 +4,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::recording::Duration;
-use crate::domain::transcription::DomainId;
 
 /// SmartScribe - AI-powered voice to text transcription
 #[derive(Parser, Debug)]
@@ -26,10 +25,6 @@ pub struct Cli {
     /// Fixed recording duration (e.g., 10s, 1m, 2m30s). If omitted, recording runs until Ctrl+C.
     #[arg(short = 'd', long, value_name = "TIME", conflicts_with = "daemon")]
     pub duration: Option<String>,
-
-    /// Domain preset for transcription context
-    #[arg(short = 'D', long, value_name = "DOMAIN")]
-    pub domain: Option<DomainArg>,
 
     /// Copy transcription to clipboard
     #[arg(short = 'c', long)]
@@ -55,14 +50,6 @@ pub struct Cli {
     /// Play audio cues on recording events
     #[arg(short = 'a', long)]
     pub audio_cue: bool,
-
-    /// Transcription backend to use
-    #[arg(long, value_name = "BACKEND")]
-    pub backend: Option<BackendArg>,
-
-    /// Path to ChatGPT cookie file (for chatgpt backend)
-    #[arg(long, value_name = "PATH")]
-    pub chatgpt_cookie_file: Option<String>,
 
     /// Run as daemon (control via: smart-scribe daemon toggle/cancel/status)
     #[arg(long)]
@@ -100,6 +87,19 @@ pub enum Commands {
         #[command(subcommand)]
         action: DaemonAction,
     },
+    /// Authenticate via ChatGPT OAuth (opens a browser)
+    Login {
+        /// Import the refresh token from an existing Codex CLI install
+        #[arg(long)]
+        from_codex: bool,
+    },
+    /// Forget the cached OAuth token
+    Logout,
+    /// Show current authentication status
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
 }
 
 /// Daemon control actions
@@ -113,6 +113,13 @@ pub enum DaemonAction {
     Status,
     /// Subscribe to daemon events (JSON output only)
     Subscribe,
+}
+
+/// Auth subcommands
+#[derive(Subcommand, Debug, Clone, Copy)]
+pub enum AuthAction {
+    /// Print current authentication state
+    Status,
 }
 
 /// Config action subcommands
@@ -152,32 +159,6 @@ impl OutputFormatArg {
     }
 }
 
-/// Backend argument for clap ValueEnum
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub enum BackendArg {
-    Gemini,
-    Chatgpt,
-}
-
-impl std::fmt::Display for BackendArg {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BackendArg::Gemini => write!(f, "gemini"),
-            BackendArg::Chatgpt => write!(f, "chatgpt"),
-        }
-    }
-}
-
-/// Domain argument for clap ValueEnum
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub enum DomainArg {
-    General,
-    Dev,
-    Medical,
-    Legal,
-    Finance,
-}
-
 /// Indicator position on screen (Linux only)
 #[cfg(target_os = "linux")]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -214,37 +195,12 @@ impl std::str::FromStr for IndicatorPosition {
     }
 }
 
-impl From<DomainArg> for DomainId {
-    fn from(arg: DomainArg) -> Self {
-        match arg {
-            DomainArg::General => DomainId::General,
-            DomainArg::Dev => DomainId::Dev,
-            DomainArg::Medical => DomainId::Medical,
-            DomainArg::Legal => DomainId::Legal,
-            DomainArg::Finance => DomainId::Finance,
-        }
-    }
-}
-
-impl From<DomainId> for DomainArg {
-    fn from(id: DomainId) -> Self {
-        match id {
-            DomainId::General => DomainArg::General,
-            DomainId::Dev => DomainArg::Dev,
-            DomainId::Medical => DomainArg::Medical,
-            DomainId::Legal => DomainArg::Legal,
-            DomainId::Finance => DomainArg::Finance,
-        }
-    }
-}
-
 /// Parsed transcribe options (oneshot mode)
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
     pub output: OutputFormatArg,
     pub duration: Option<Duration>,
     pub max_duration: Option<Duration>,
-    pub domain: DomainId,
     pub clipboard: bool,
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
@@ -259,7 +215,6 @@ pub struct TranscribeOptions {
 pub struct DaemonOptions {
     pub output: OutputFormatArg,
     pub max_duration: Duration,
-    pub domain: DomainId,
     pub clipboard: bool,
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
@@ -273,8 +228,8 @@ pub struct DaemonOptions {
     pub indicator_position: IndicatorPosition,
 }
 
-/// Valid backend values
-pub const VALID_BACKENDS: &[&str] = &["gemini", "chatgpt"];
+/// Valid auth-mode values.
+pub const VALID_AUTH_MODES: &[&str] = &["oauth", "api_key"];
 
 /// Valid config keys.
 ///
@@ -283,12 +238,11 @@ pub const VALID_BACKENDS: &[&str] = &["gemini", "chatgpt"];
 /// can target multiple machines. Validation is platform-independent for that
 /// reason; runtime gating still applies the appropriate feature per OS.
 pub const VALID_CONFIG_KEYS: &[&str] = &[
-    "api_key",
-    "backend",
-    "chatgpt_cookie_file",
+    "auth",
+    "openai_api_key",
+    "openai_transcribe_model",
     "duration",
     "max_duration",
-    "domain",
     "clipboard",
     "keystroke",
     "notify",
@@ -326,7 +280,6 @@ mod tests {
         let cli = Cli::parse_from(["smart-scribe"]);
         assert_eq!(cli.output, OutputFormatArg::Text);
         assert!(cli.duration.is_none());
-        assert!(cli.domain.is_none());
         assert!(!cli.clipboard);
         assert!(!cli.keystroke);
         assert!(cli.keystroke_tool.is_none());
@@ -339,12 +292,6 @@ mod tests {
     fn cli_parses_duration() {
         let cli = Cli::parse_from(["smart-scribe", "-d", "30s"]);
         assert_eq!(cli.duration, Some("30s".to_string()));
-    }
-
-    #[test]
-    fn cli_parses_domain() {
-        let cli = Cli::parse_from(["smart-scribe", "-D", "dev"]);
-        assert_eq!(cli.domain, Some(DomainArg::Dev));
     }
 
     #[test]
@@ -403,29 +350,57 @@ mod tests {
 
     #[test]
     fn cli_parses_config_set() {
-        let cli = Cli::parse_from(["smart-scribe", "config", "set", "domain", "dev"]);
+        let cli = Cli::parse_from(["smart-scribe", "config", "set", "auth", "api_key"]);
         if let Some(Commands::Config {
             action: ConfigAction::Set { key, value },
         }) = cli.command
         {
-            assert_eq!(key, "domain");
-            assert_eq!(value, "dev");
+            assert_eq!(key, "auth");
+            assert_eq!(value, "api_key");
         } else {
             panic!("Expected Config Set command");
         }
     }
 
     #[test]
-    fn domain_arg_converts_to_domain_id() {
-        assert_eq!(DomainId::from(DomainArg::General), DomainId::General);
-        assert_eq!(DomainId::from(DomainArg::Dev), DomainId::Dev);
+    fn cli_parses_login() {
+        let cli = Cli::parse_from(["smart-scribe", "login"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Login { from_codex: false })
+        ));
+
+        let cli = Cli::parse_from(["smart-scribe", "login", "--from-codex"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Login { from_codex: true })
+        ));
+    }
+
+    #[test]
+    fn cli_parses_logout() {
+        let cli = Cli::parse_from(["smart-scribe", "logout"]);
+        assert!(matches!(cli.command, Some(Commands::Logout)));
+    }
+
+    #[test]
+    fn cli_parses_auth_status() {
+        let cli = Cli::parse_from(["smart-scribe", "auth", "status"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Auth {
+                action: AuthAction::Status
+            })
+        ));
     }
 
     #[test]
     fn valid_config_keys() {
         // Portable schema: every documented key is valid on every platform.
         // Runtime gating still applies the appropriate feature per OS.
-        assert!(is_valid_config_key("api_key"));
+        assert!(is_valid_config_key("auth"));
+        assert!(is_valid_config_key("openai_api_key"));
+        assert!(is_valid_config_key("openai_transcribe_model"));
         assert!(is_valid_config_key("duration"));
         assert!(is_valid_config_key("linux.keystroke_tool"));
         assert!(is_valid_config_key("linux.indicator"));
@@ -433,6 +408,10 @@ mod tests {
         assert!(is_valid_config_key("linux.paste"));
         assert!(is_valid_config_key("windows.indicator"));
         assert!(is_valid_config_key("windows.show_balloon"));
+        assert!(!is_valid_config_key("api_key"));
+        assert!(!is_valid_config_key("backend"));
+        assert!(!is_valid_config_key("domain"));
+        assert!(!is_valid_config_key("chatgpt_cookie_file"));
         assert!(!is_valid_config_key("invalid_key"));
     }
 

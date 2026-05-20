@@ -18,11 +18,13 @@ fn help_output() {
     assert!(stdout.contains("transcription"));
     assert!(stdout.contains("--output"));
     assert!(stdout.contains("--duration"));
-    assert!(stdout.contains("--domain"));
     assert!(stdout.contains("--daemon"));
     assert!(stdout.contains("--clipboard"));
     assert!(stdout.contains("--keystroke"));
     assert!(stdout.contains("--notify"));
+    assert!(stdout.contains("login"));
+    assert!(stdout.contains("logout"));
+    assert!(stdout.contains("auth"));
 }
 
 #[test]
@@ -83,6 +85,24 @@ fn config_help() {
 }
 
 #[test]
+fn auth_status_runs() {
+    let output = smart_scribe_bin()
+        .args(["auth", "status"])
+        .env("HOME", "/nonexistent")
+        .env("XDG_CONFIG_HOME", "/nonexistent")
+        .env_remove("OPENAI_API_KEY")
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("auth") || stdout.contains("oauth"),
+        "expected auth status output, got: {stdout}"
+    );
+}
+
+#[test]
 fn invalid_duration_error() {
     let output = smart_scribe_bin()
         .args(["--duration", "invalid"])
@@ -115,20 +135,27 @@ fn daemon_duration_conflict() {
 }
 
 #[test]
-fn invalid_domain_error() {
+fn rejects_legacy_domain_flag() {
     let output = smart_scribe_bin()
-        .args(["--domain", "invalid"])
+        .args(["--domain", "dev"])
         .output()
         .expect("Failed to execute command");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("invalid") || stderr.contains("Invalid"),
-        "Expected error about invalid domain, got: {}",
+        stderr.contains("unexpected argument") || stderr.contains("--domain"),
+        "Expected error about removed --domain flag, got: {}",
         stderr
     );
 }
 
-// Note: Tests for valid duration/domain formats are covered by unit tests
-// Integration tests would hang because the app starts recording when args are valid
+#[test]
+fn rejects_legacy_backend_flag() {
+    let output = smart_scribe_bin()
+        .args(["--backend", "chatgpt"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(!output.status.success());
+}

@@ -9,13 +9,6 @@ pub struct DurationParseError {
     pub input: String,
 }
 
-/// Error when an invalid domain ID is provided
-#[derive(Debug, Clone, Error)]
-#[error("Invalid domain: \"{input}\". Valid domains are: general, dev, medical, legal, finance")]
-pub struct InvalidDomainError {
-    pub input: String,
-}
-
 /// Error when configuration fails
 #[derive(Debug, Clone, Error)]
 pub enum ConfigError {

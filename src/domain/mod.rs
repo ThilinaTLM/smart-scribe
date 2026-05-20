@@ -14,4 +14,4 @@ pub use config::AppConfig;
 pub use daemon::{DaemonSession, DaemonState};
 pub use error::*;
 pub use recording::Duration;
-pub use transcription::{AudioData, AudioMimeType, DomainId, SystemPrompt};
+pub use transcription::{AudioData, AudioMimeType};

@@ -11,7 +11,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-AI-powered voice-to-text for Linux, macOS, and Windows. Record from your microphone and get accurate transcriptions using Google Gemini or ChatGPT.
+AI-powered voice-to-text for Linux, macOS, and Windows. Record from your microphone and get accurate transcriptions using your ChatGPT subscription (OAuth) or an OpenAI API key.
 
 <p align="center">
   <img src="assets/demo-claude-code.gif" alt="SmartScribe with Claude Code" width="720">
@@ -35,57 +35,56 @@ The install scripts automatically detect fresh installs, updates, and reinstalls
 
 ## Quick Start
 
-### Gemini (default)
+### ChatGPT OAuth (default — uses your Plus/Pro subscription)
 
-1. **Get an API key** from [Google AI Studio](https://aistudio.google.com/apikey)
+```bash
+smart-scribe login          # opens a browser, persists token at <config_dir>/smart-scribe/oauth.json
+smart-scribe -d 10s         # record and transcribe
+smart-scribe auth status    # see current auth state
+```
 
-2. **Configure:**
+You can sign out at any time with `smart-scribe logout`. The token is refreshed automatically before each request.
 
-   ```bash
-   smart-scribe config set api_key YOUR_API_KEY
-   ```
+If you already use OpenAI's Codex CLI, you can skip the browser step:
 
-3. **Record and transcribe:**
-   ```bash
-   smart-scribe              # 10 second recording
-   smart-scribe -d 30s       # 30 second recording
-   smart-scribe -d 1m -c     # 1 minute, copy to clipboard
-   ```
+```bash
+smart-scribe login --from-codex
+```
 
-### ChatGPT
+This imports the refresh token from `~/.codex/auth.json` and rotates it under our own store. **Note:** rotating the refresh token invalidates Codex's copy, so you will need to re-run `codex login` once afterwards.
 
-1. **Export cookies** from your browser while logged into [chatgpt.com](https://chatgpt.com) (use a browser extension like "Cookie-Editor" to export as JSON)
+### OpenAI API key (metered)
 
-2. **Save the cookie file:**
+```bash
+smart-scribe config set auth api_key
+export OPENAI_API_KEY=sk-...          # or: smart-scribe config set openai_api_key sk-...
+smart-scribe -d 10s
+```
 
-   ```bash
-   # Default location (auto-detected):
-   # Linux/macOS: ~/.config/smart-scribe/chatgpt-cookies.json
-   # Windows: %APPDATA%\smart-scribe\chatgpt-cookies.json
+The API path uses `gpt-4o-mini-transcribe` by default — change with:
 
-   # Or specify a custom path:
-   smart-scribe config set chatgpt_cookie_file /path/to/cookies.json
-   ```
+```bash
+smart-scribe config set openai_transcribe_model whisper-1
+```
 
-3. **Set the backend and transcribe:**
-   ```bash
-   smart-scribe config set backend chatgpt
-   smart-scribe -d 10s
+## Auth modes
 
-   # Or use per-invocation:
-   smart-scribe --backend chatgpt -d 10s
-   ```
+| Mode      | Endpoint                                  | Credential         | Billing                          |
+| --------- | ----------------------------------------- | ------------------ | -------------------------------- |
+| `oauth`   | `chatgpt.com/backend-api/transcribe`      | OAuth Bearer token | Counts against ChatGPT subscription |
+| `api_key` | `api.openai.com/v1/audio/transcriptions`  | `OPENAI_API_KEY`   | Metered per-minute API usage    |
+
+> **Note on OAuth:** smart-scribe authenticates against `auth.openai.com` using the public OpenAI Codex CLI OAuth client. OpenAI has not (yet) opened that client registry to third parties, so the browser consent screen will show "Codex CLI". This is the same approach used by community tools like `term-llm`, `openhands`, and others. If OpenAI tightens the policy in the future the `api_key` path will continue to work.
 
 ## Features
 
-- **Voice-to-text** - Record audio and transcribe with multiple AI backends
-- **Multiple backends** - Google Gemini (API key) or ChatGPT (browser cookies)
-- **Domain presets** - Optimized for dev, medical, legal, finance contexts (Gemini only)
-- **Clipboard integration** - Copy transcriptions directly (`-c`)
-- **Keystroke output** - Type into focused window (`-k`)
-- **Desktop notifications** - Get notified when done (`-n`)
-- **Audio cues** - Audible beeps when recording starts/stops (`-a`)
-- **Daemon mode** - Background service for hotkey integration
+- **Voice-to-text** — record audio, get clean text
+- **Two auth modes** — ChatGPT subscription via OAuth or OpenAI API key
+- **Clipboard integration** — copy transcriptions directly (`-c`)
+- **Keystroke output** — type into focused window (`-k`)
+- **Desktop notifications** — get notified when done (`-n`)
+- **Audio cues** — audible beeps when recording starts/stops (`-a`)
+- **Daemon mode** — background service for hotkey integration
 
 ### Platform Support
 
@@ -97,7 +96,7 @@ The install scripts automatically detect fresh installs, updates, and reinstalls
 | Notifications   | notify-rust  |   native    |   native   |
 | Daemon Mode     | Unix socket  | Unix socket | Named pipe |
 
-Linux keystroke: `enigo` (default) or native tools via `--keystroke-tool`
+Linux keystroke: `enigo` (default) or native tools via `--keystroke-tool`.
 
 ## Usage
 
@@ -109,19 +108,18 @@ Record for a fixed duration:
 smart-scribe                     # 10s recording, output to stdout
 smart-scribe -d 30s              # 30 second recording
 smart-scribe -d 1m -c            # 1 minute, copy to clipboard
-smart-scribe -d 2m -D dev -k     # 2 minutes, dev domain, type result
-smart-scribe -c -k -n            # All outputs: clipboard + keystroke + notify
+smart-scribe -d 2m -k            # 2 minutes, type result
+smart-scribe -c -k -n            # Clipboard + keystroke + notify
 smart-scribe --output json       # Machine-readable one-shot output
 ```
 
 ### Daemon Mode
 
-Run as background service (ideal for hotkey integration):
+Run as a background service (ideal for hotkey integration):
 
 ```bash
 # Start daemon
 smart-scribe --daemon -c -n      # With clipboard + notifications
-smart-scribe --daemon -D dev     # With dev domain preset
 
 # Control daemon
 smart-scribe daemon toggle       # Start/stop recording
@@ -176,35 +174,25 @@ This emits newline-delimited JSON (NDJSON / JSONL), for example:
 
 If you start the daemon itself with `--output json`, completed transcriptions written by the daemon process are also emitted as JSON instead of bare text.
 
-### Domain Presets (Gemini only)
-
-Domain presets provide context-aware transcription by sending domain-specific system prompts to Gemini. These are ignored when using the ChatGPT backend.
-
-| Domain    | Use Case                                           |
-| --------- | -------------------------------------------------- |
-| `general` | General conversation (default)                     |
-| `dev`     | Software development - code, APIs, technical terms |
-| `medical` | Medical/healthcare terminology                     |
-| `legal`   | Legal terminology and phrases                      |
-| `finance` | Financial terms and acronyms                       |
-
-```bash
-smart-scribe -D dev        # Software development context
-smart-scribe -D medical    # Medical terminology
-```
-
 ## Configuration
 
 ```bash
-smart-scribe config init              # Create config with defaults
-smart-scribe config set api_key KEY   # Set Gemini API key
-smart-scribe config set backend chatgpt  # Switch to ChatGPT backend
-smart-scribe config set domain dev    # Set default domain (Gemini only)
-smart-scribe config list              # Show all settings
-smart-scribe config path              # Show config file location
+smart-scribe config init                              # Create config with defaults
+smart-scribe config set auth oauth                    # Use ChatGPT subscription (default)
+smart-scribe config set auth api_key                  # Use OpenAI API key
+smart-scribe config set openai_api_key sk-...         # Persist key in config (or use OPENAI_API_KEY env)
+smart-scribe config set openai_transcribe_model whisper-1
+smart-scribe config list                              # Show all settings
+smart-scribe config path                              # Show config file location
 ```
 
-**Config file:** `~/.config/smart-scribe/config.toml`
+**Config file:**
+
+- Linux: `~/.config/smart-scribe/config.toml`
+- macOS: `~/Library/Application Support/smart-scribe/config.toml`
+- Windows: `%APPDATA%\smart-scribe\config.toml`
+
+**OAuth token file:** sibling `oauth.json` in the same directory (mode 0600 on Unix; managed by `smart-scribe login` / `logout`).
 
 **Priority:** CLI args > environment variables > config file > defaults
 
@@ -213,9 +201,7 @@ smart-scribe config path              # Show config file location
 | Option                          | Description                          | Default |
 | ------------------------------- | ------------------------------------ | ------- |
 | `--output <FORMAT>`             | Output format (`text`, `json`)       | text    |
-| `--backend <BACKEND>`           | Transcription backend (gemini, chatgpt) | gemini  |
 | `-d, --duration <TIME>`         | Recording duration (10s, 1m, 2m30s)  | 10s     |
-| `-D, --domain <DOMAIN>`         | Domain preset (Gemini only)          | general |
 | `-c, --clipboard`               | Copy to clipboard                    | off     |
 | `-k, --keystroke`               | Type into focused window             | off     |
 | `--keystroke-tool <TOOL>`       | Keystroke tool (Linux only)          | enigo   |
@@ -223,7 +209,20 @@ smart-scribe config path              # Show config file location
 | `-a, --audio-cue`               | Play audio cues on recording events  | off     |
 | `--daemon`                      | Run in daemon mode                   | off     |
 | `--max-duration <TIME>`         | Max recording (daemon safety limit)  | 60s     |
-| `--chatgpt-cookie-file <PATH>`  | Path to ChatGPT cookie file          | auto    |
+| `-p, --paste`                   | Smart paste (Linux/KDE Wayland)      | off     |
+| `--indicator`                   | Show recording indicator (daemon)    | off     |
+| `--indicator-position <POS>`    | Position of indicator (Linux only)   | top-right |
+
+### Subcommands
+
+| Command                       | Description                                       |
+| ----------------------------- | ------------------------------------------------- |
+| `smart-scribe login`          | Open browser, run OAuth flow, store token         |
+| `smart-scribe login --from-codex` | Import refresh token from existing Codex install |
+| `smart-scribe logout`         | Delete OAuth token                                |
+| `smart-scribe auth status`    | Print current auth mode & token state             |
+| `smart-scribe config <...>`   | Manage configuration                              |
+| `smart-scribe daemon <...>`   | Control the running daemon                        |
 
 <details>
 <summary><strong>Platform Notes</strong></summary>
@@ -249,7 +248,6 @@ By default, SmartScribe uses `enigo` (cross-platform library). On Linux, you can
 | `xdotool` | X11-only                                       |
 
 ```bash
-# Via CLI flag
 smart-scribe -k --keystroke-tool auto
 smart-scribe -k --keystroke-tool xdotool
 
