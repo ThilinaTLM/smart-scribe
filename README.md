@@ -9,7 +9,7 @@
 [![Release](https://img.shields.io/github/v/release/ThilinaTLM/smart-scribe)](https://github.com/ThilinaTLM/smart-scribe/releases)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20|%20macOS%20|%20Windows-blue)]()
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 AI-powered voice-to-text for Linux, macOS, and Windows. Record from your microphone and get accurate transcriptions using your ChatGPT subscription (OAuth) or an OpenAI API key.
 
@@ -328,4 +328,4 @@ sudo cp target/release/smart-scribe /usr/local/bin/
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE).
