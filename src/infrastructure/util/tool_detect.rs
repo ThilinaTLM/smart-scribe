@@ -5,9 +5,11 @@
 //! callsite had its own copy; centralising lets a single fix (e.g. switching
 //! from `which` to an explicit PATH walk) land in one place.
 //!
-//! `is_ydotool_socket_available` is Linux-only by definition; the function
-//! does not exist on other platforms (use `#[cfg(target_os = "linux")]` at
-//! the call site if you need to gate against it).
+//! `is_ydotool_socket_available` is Linux-only by definition; on non-Linux
+//! targets a stub returning `false` is provided so call sites in cross-
+//! platform modules (e.g. `smart_paste::create_smart_paste`) still compile
+//! without scattering `#[cfg]` attributes. Those call sites are themselves
+//! only reached from Linux-gated runtime paths.
 
 use std::process::Stdio;
 
@@ -49,5 +51,12 @@ pub fn is_ydotool_socket_available() -> bool {
         }
     }
 
+    false
+}
+
+/// Non-Linux stub: ydotool only exists on Linux, so the socket never does.
+/// Kept so cross-platform modules can import the symbol unconditionally.
+#[cfg(not(target_os = "linux"))]
+pub fn is_ydotool_socket_available() -> bool {
     false
 }
