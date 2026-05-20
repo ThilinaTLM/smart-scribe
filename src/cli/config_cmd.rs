@@ -397,13 +397,11 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                     message: format!("{m}. Valid options: {}", VALID_AUTH_MODES.join(", ")),
                 })?;
         }
-        "openai_transcribe_model" => {
-            if value.trim().is_empty() {
-                return Err(ConfigError::ValidationError {
-                    key: key.to_string(),
-                    message: "Model name cannot be empty".to_string(),
-                });
-            }
+        "openai_transcribe_model" if value.trim().is_empty() => {
+            return Err(ConfigError::ValidationError {
+                key: key.to_string(),
+                message: "Model name cannot be empty".to_string(),
+            });
         }
         "transcribe_language" => {
             let v = value.trim();
@@ -417,15 +415,13 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                 });
             }
         }
-        "transcribe_prompt" => {
-            // Anything non-empty up to a sensible bound. OpenAI accepts long
-            // prompts on gpt-4o models; whisper-1 truncates to 224 tokens.
-            if value.len() > 4096 {
-                return Err(ConfigError::ValidationError {
-                    key: key.to_string(),
-                    message: "Prompt is too long (max 4096 chars)".to_string(),
-                });
-            }
+        // Anything non-empty up to a sensible bound. OpenAI accepts long
+        // prompts on gpt-4o models; whisper-1 truncates to 224 tokens.
+        "transcribe_prompt" if value.len() > 4096 => {
+            return Err(ConfigError::ValidationError {
+                key: key.to_string(),
+                message: "Prompt is too long (max 4096 chars)".to_string(),
+            });
         }
         "clipboard"
         | "keystroke"
