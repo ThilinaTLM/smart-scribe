@@ -3,7 +3,7 @@
 //! Speech-optimized settings:
 //! - 16kHz sample rate (or resampling from device rate)
 //! - Mono channel
-//! - FLAC encoding (lossless, Gemini-compatible)
+//! - FLAC encoding (lossless, accepted by both ChatGPT and OpenAI APIs)
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -190,7 +190,7 @@ impl CpalRecorder {
             .collect()
     }
 
-    /// Encode PCM samples to FLAC format (lossless, Gemini-compatible)
+    /// Encode PCM samples to FLAC format (lossless)
     fn encode_audio(samples: &[i16], sample_rate: u32) -> Result<AudioData, RecordingError> {
         // Resample to 16kHz if needed
         let resampled = Self::resample_to_16k(samples, sample_rate)?;

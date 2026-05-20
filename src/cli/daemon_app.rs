@@ -18,6 +18,7 @@ use crate::infrastructure::{
 
 use super::app::{create_transcriber, EXIT_ERROR, EXIT_SUCCESS};
 use super::args::DaemonOptions;
+use super::auth_cmd::describe_auth;
 use super::ipc::create_ipc_server;
 use super::output::DaemonEvent;
 use super::pid_file::{PidFile, PidFileError};
@@ -64,6 +65,7 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
             return ExitCode::from(EXIT_ERROR);
         }
     };
+    eprintln!("{}", describe_auth(config));
 
     // Create adapters (using cross-platform implementations)
     let recorder = create_recorder();
@@ -122,7 +124,6 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
     let enable_paste = false;
 
     let config = DaemonConfig {
-        domain: options.domain,
         max_duration: options.max_duration,
         enable_clipboard: options.clipboard,
         enable_keystroke: options.keystroke,

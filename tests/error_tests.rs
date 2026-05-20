@@ -7,23 +7,30 @@ fn smart_scribe_bin() -> Command {
 }
 
 #[test]
-fn missing_api_key_error() {
-    // Remove API key from environment and test with a short timeout
-    // The app should fail fast with a clear error message about missing API key
+fn missing_api_key_in_api_mode_errors_quickly() {
+    // Force `auth = api_key` via a tmp config so the missing-key check fires
+    // before any recording starts.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg_dir = dir.path().join("smart-scribe");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(
+        cfg_dir.join("config.toml"),
+        "auth = \"api_key\"\nduration = \"1s\"\n",
+    )
+    .unwrap();
+
     let output = smart_scribe_bin()
-        .env_remove("GEMINI_API_KEY")
-        .env("HOME", "/nonexistent") // Prevent reading config file
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+        .env_remove("OPENAI_API_KEY")
+        .env("HOME", dir.path())
+        .env("XDG_CONFIG_HOME", dir.path())
+        .args(["-d", "1s"])
         .output()
         .expect("Failed to execute command");
 
-    // Note: This may hang if the API key check happens after recording starts
-    // In our implementation, API key is checked early so it should fail fast
-    // If this test hangs, it means the API key check timing needs to be revisited
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("API") || stderr.contains("api_key") || stderr.contains("key"),
+        stderr.contains("OPENAI_API_KEY") || stderr.contains("openai_api_key"),
         "Expected error about missing API key, got: {}",
         stderr
     );
@@ -78,19 +85,33 @@ fn config_set_invalid_duration() {
 }
 
 #[test]
-fn config_set_invalid_domain() {
+fn config_set_invalid_auth_mode() {
     let output = smart_scribe_bin()
-        .args(["config", "set", "domain", "invalid_domain"])
+        .args(["config", "set", "auth", "cookies"])
         .output()
         .expect("Failed to execute command");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Invalid") || stderr.contains("invalid") || stderr.contains("domain"),
-        "Expected error about invalid domain, got: {}",
+        stderr.contains("Invalid") || stderr.contains("auth") || stderr.contains("oauth"),
+        "Expected error about invalid auth mode, got: {}",
         stderr
     );
+}
+
+#[test]
+fn config_set_legacy_keys_rejected() {
+    for key in ["api_key", "backend", "domain", "chatgpt_cookie_file"] {
+        let output = smart_scribe_bin()
+            .args(["config", "set", key, "x"])
+            .output()
+            .expect("Failed to execute command");
+        assert!(
+            !output.status.success(),
+            "expected legacy key `{key}` to be rejected"
+        );
+    }
 }
 
 #[test]
@@ -111,7 +132,6 @@ fn config_set_invalid_boolean() {
 
 #[test]
 fn config_list_with_no_file() {
-    // Test that config list works even without a config file (uses empty config)
     let output = smart_scribe_bin()
         .args(["config", "list"])
         .env("HOME", "/nonexistent")
@@ -119,11 +139,10 @@ fn config_list_with_no_file() {
         .output()
         .expect("Failed to execute command");
 
-    // Should succeed with defaults shown as "(not set)"
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("not set") || stdout.contains("api_key"),
+        stdout.contains("not set") || stdout.contains("auth"),
         "Expected config list output, got: {}",
         stdout
     );

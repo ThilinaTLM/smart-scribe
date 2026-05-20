@@ -6,7 +6,6 @@ use tokio::sync::Mutex;
 
 use crate::domain::daemon::{DaemonSession, DaemonState, InvalidStateTransition};
 use crate::domain::recording::Duration;
-use crate::domain::transcription::{DomainId, SystemPrompt};
 
 use super::ports::{
     Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon, Notifier,
@@ -24,16 +23,11 @@ pub enum DaemonError {
 
     #[error("Invalid state transition: {0}")]
     InvalidState(#[from] InvalidStateTransition),
-
-    #[error("Missing API key. Set GEMINI_API_KEY or configure via 'smart-scribe config set api_key <key>'")]
-    MissingApiKey,
 }
 
 /// Configuration for daemon mode
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
-    /// Domain for transcription context
-    pub domain: DomainId,
     /// Maximum recording duration (safety limit)
     pub max_duration: Duration,
     /// Whether to copy result to clipboard
@@ -49,7 +43,6 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            domain: DomainId::default(),
             max_duration: Duration::default_max_duration(),
             enable_clipboard: false,
             enable_keystroke: false,
@@ -197,9 +190,8 @@ where
                 .await;
         }
 
-        // Build prompt and transcribe
-        let prompt = SystemPrompt::build(self.config.domain);
-        let text = self.transcriber.transcribe(&audio, &prompt).await?;
+        // Transcribe
+        let text = self.transcriber.transcribe(&audio).await?;
 
         // Perform output actions
         let clipboard_copied = if self.config.enable_clipboard {
@@ -365,11 +357,7 @@ mod tests {
 
     #[async_trait]
     impl Transcriber for MockTranscriber {
-        async fn transcribe(
-            &self,
-            _audio: &AudioData,
-            _prompt: &SystemPrompt,
-        ) -> Result<String, TranscriptionError> {
+        async fn transcribe(&self, _audio: &AudioData) -> Result<String, TranscriptionError> {
             Ok("Test transcription".to_string())
         }
     }

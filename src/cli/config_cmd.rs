@@ -3,12 +3,11 @@
 use std::collections::BTreeMap;
 
 use crate::application::ports::ConfigStore;
-use crate::domain::config::{LinuxConfig, WindowsConfig};
+use crate::domain::config::{AuthMode, LinuxConfig, WindowsConfig};
 use crate::domain::error::ConfigError;
-use crate::domain::transcription::DomainId;
 
 use super::args::{
-    is_valid_config_key, ConfigAction, VALID_BACKENDS, VALID_CONFIG_KEYS, VALID_KEYSTROKE_TOOLS,
+    is_valid_config_key, ConfigAction, VALID_AUTH_MODES, VALID_CONFIG_KEYS, VALID_KEYSTROKE_TOOLS,
 };
 use super::presenter::Presenter;
 
@@ -66,12 +65,23 @@ async fn handle_set<S: ConfigStore>(
 
     // Update the appropriate field
     match key {
-        "api_key" => config.api_key = Some(value.to_string()),
-        "backend" => config.backend = Some(value.to_string()),
-        "chatgpt_cookie_file" => config.chatgpt_cookie_file = Some(value.to_string()),
+        "auth" => {
+            // Normalize to canonical form before persisting.
+            let mode: AuthMode =
+                value
+                    .parse()
+                    .map_err(|m: String| ConfigError::ValidationError {
+                        key: key.to_string(),
+                        message: m,
+                    })?;
+            config.auth = Some(mode.to_string());
+        }
+        "openai_api_key" => config.openai_api_key = Some(value.to_string()),
+        "openai_transcribe_model" => config.openai_transcribe_model = Some(value.to_string()),
+        "transcribe_prompt" => config.transcribe_prompt = Some(value.to_string()),
+        "transcribe_language" => config.transcribe_language = Some(value.to_string()),
         "duration" => config.duration = Some(value.to_string()),
         "max_duration" => config.max_duration = Some(value.to_string()),
-        "domain" => config.domain = Some(value.to_string()),
         "clipboard" => {
             config.clipboard =
                 Some(parse_bool(value).map_err(|_| ConfigError::ValidationError {
@@ -100,7 +110,6 @@ async fn handle_set<S: ConfigStore>(
                 })?)
         }
         "linux.keystroke_tool" => {
-            // Initialize linux config if None
             if config.linux.is_none() {
                 config.linux = Some(LinuxConfig::default());
             }
@@ -169,15 +178,20 @@ async fn handle_set<S: ConfigStore>(
 
     // Save config
     store.save(&config).await?;
+    let display_value = if key == "openai_api_key" {
+        mask_api_key(value)
+    } else {
+        value.to_string()
+    };
     if presenter.is_json() {
         presenter.output_json(&serde_json::json!({
             "ok": true,
             "action": "set",
             "key": key,
-            "value": value,
+            "value": display_value,
         }));
     } else {
-        presenter.success(&format!("{} = {}", key, value));
+        presenter.success(&format!("{} = {}", key, display_value));
     }
 
     Ok(())
@@ -199,12 +213,13 @@ async fn handle_get<S: ConfigStore>(
     let config = store.load().await?;
 
     let value = match key {
-        "api_key" => config.api_key.map(|s| mask_api_key(&s)),
-        "backend" => config.backend,
-        "chatgpt_cookie_file" => config.chatgpt_cookie_file,
+        "auth" => config.auth,
+        "openai_api_key" => config.openai_api_key.map(|s| mask_api_key(&s)),
+        "openai_transcribe_model" => config.openai_transcribe_model,
+        "transcribe_prompt" => config.transcribe_prompt,
+        "transcribe_language" => config.transcribe_language,
         "duration" => config.duration,
         "max_duration" => config.max_duration,
-        "domain" => config.domain,
         "clipboard" => config.clipboard.map(|b| b.to_string()),
         "keystroke" => config.keystroke.map(|b| b.to_string()),
         "notify" => config.notify.map(|b| b.to_string()),
@@ -258,18 +273,25 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
     let config = store.load().await?;
 
     let values = BTreeMap::from([
+        ("auth".to_string(), config.auth.clone()),
         (
-            "api_key".to_string(),
-            config.api_key.as_ref().map(|s| mask_api_key(s)),
+            "openai_api_key".to_string(),
+            config.openai_api_key.as_ref().map(|s| mask_api_key(s)),
         ),
-        ("backend".to_string(), config.backend.clone()),
         (
-            "chatgpt_cookie_file".to_string(),
-            config.chatgpt_cookie_file.clone(),
+            "openai_transcribe_model".to_string(),
+            config.openai_transcribe_model.clone(),
+        ),
+        (
+            "transcribe_prompt".to_string(),
+            config.transcribe_prompt.clone(),
+        ),
+        (
+            "transcribe_language".to_string(),
+            config.transcribe_language.clone(),
         ),
         ("duration".to_string(), config.duration.clone()),
         ("max_duration".to_string(), config.max_duration.clone()),
-        ("domain".to_string(), config.domain.clone()),
         (
             "clipboard".to_string(),
             config.clipboard.map(|b| b.to_string()),
@@ -367,26 +389,39 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                     message: e.to_string(),
                 })?;
         }
-        "backend" => {
-            let lower = value.to_lowercase();
-            if !VALID_BACKENDS.contains(&lower.as_str()) {
+        "auth" => {
+            value
+                .parse::<AuthMode>()
+                .map_err(|m| ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: format!("{m}. Valid options: {}", VALID_AUTH_MODES.join(", ")),
+                })?;
+        }
+        "openai_transcribe_model" if value.trim().is_empty() => {
+            return Err(ConfigError::ValidationError {
+                key: key.to_string(),
+                message: "Model name cannot be empty".to_string(),
+            });
+        }
+        "transcribe_language" => {
+            let v = value.trim();
+            // ISO 639-1 is 2 letters; we allow 2-3 letters to also accept
+            // 639-3 codes some users might pass.
+            if !v.is_empty() && (v.len() > 8 || !v.chars().all(|c| c.is_ascii_alphabetic())) {
                 return Err(ConfigError::ValidationError {
                     key: key.to_string(),
-                    message: format!(
-                        "Invalid value '{}'. Valid options: {}",
-                        value,
-                        VALID_BACKENDS.join(", ")
-                    ),
+                    message: "Language must be an ISO 639-1/639-3 code (e.g. en, es, fr)"
+                        .to_string(),
                 });
             }
         }
-        "domain" => {
-            value
-                .parse::<DomainId>()
-                .map_err(|e| ConfigError::ValidationError {
-                    key: key.to_string(),
-                    message: e.to_string(),
-                })?;
+        // Anything non-empty up to a sensible bound. OpenAI accepts long
+        // prompts on gpt-4o models; whisper-1 truncates to 224 tokens.
+        "transcribe_prompt" if value.len() > 4096 => {
+            return Err(ConfigError::ValidationError {
+                key: key.to_string(),
+                message: "Prompt is too long (max 4096 chars)".to_string(),
+            });
         }
         "clipboard"
         | "keystroke"
@@ -435,7 +470,7 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                 });
             }
         }
-        _ => {} // api_key, chatgpt_cookie_file accept any string
+        _ => {} // openai_api_key accepts any string
     }
     Ok(())
 }
@@ -450,7 +485,7 @@ fn parse_bool(value: &str) -> Result<bool, ()> {
 }
 
 /// Mask API key for display (show first 4 and last 4 chars)
-fn mask_api_key(key: &str) -> String {
+pub(crate) fn mask_api_key(key: &str) -> String {
     if key.len() <= 8 {
         "*".repeat(key.len())
     } else {
@@ -498,21 +533,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_domain_valid() {
-        assert!(validate_config_value("domain", "dev").is_ok());
-        assert!(validate_config_value("domain", "general").is_ok());
+    fn validate_auth_valid() {
+        assert!(validate_config_value("auth", "oauth").is_ok());
+        assert!(validate_config_value("auth", "api_key").is_ok());
+        assert!(validate_config_value("auth", "API-Key").is_ok());
     }
 
     #[test]
-    fn validate_domain_invalid() {
-        assert!(validate_config_value("domain", "invalid").is_err());
+    fn validate_auth_invalid() {
+        assert!(validate_config_value("auth", "cookies").is_err());
+    }
+
+    #[test]
+    fn validate_openai_transcribe_model_rejects_empty() {
+        assert!(validate_config_value("openai_transcribe_model", "  ").is_err());
+        assert!(validate_config_value("openai_transcribe_model", "whisper-1").is_ok());
     }
 
     #[test]
     fn validate_keystroke_tool_accepts_all_tools_on_all_platforms() {
-        // The TOML schema is portable: any tool name valid on any OS so a
-        // shared dotfile can target Linux from Windows/macOS. Runtime gating
-        // still applies the correct backend per platform.
         assert!(validate_config_value("linux.keystroke_tool", "enigo").is_ok());
         assert!(validate_config_value("linux.keystroke_tool", "auto").is_ok());
         assert!(validate_config_value("linux.keystroke_tool", "ydotool").is_ok());

@@ -1,9 +1,10 @@
 //! Infrastructure layer - Adapter implementations
 //!
-//! Contains concrete implementations of the port interfaces,
-//! integrating with external systems like Gemini API, clipboard, etc.
+//! Contains concrete implementations of the port interfaces, integrating with
+//! external systems like the ChatGPT/OpenAI APIs, audio capture, clipboard, etc.
 
 pub mod audio_cue;
+pub mod auth;
 pub mod clipboard;
 pub mod config;
 pub mod keystroke;
@@ -14,6 +15,7 @@ pub mod transcription;
 
 // Re-export adapters
 pub use audio_cue::{create_audio_cue, NoOpAudioCue, RodioAudioCue};
+pub use auth::{OAuthError, OAuthStore, OAuthToken};
 pub use clipboard::{create_clipboard, ArboardClipboard, WaylandClipboard};
 pub use config::XdgConfigStore;
 pub use keystroke::{
@@ -23,4 +25,4 @@ pub use keystroke::{
 pub use notification::{create_notifier, NotifyRustNotifier, NotifySendNotifier};
 pub use recording::{create_recorder, CpalRecorder};
 pub use smart_paste::{create_smart_paste, NoOpSmartPaste};
-pub use transcription::{ChatGptTranscriber, GeminiTranscriber};
+pub use transcription::{ChatGptOAuthTranscriber, OpenAiApiTranscriber};

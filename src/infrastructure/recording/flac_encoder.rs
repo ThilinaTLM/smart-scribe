@@ -1,7 +1,7 @@
-//! FLAC encoder for Gemini API compatibility
+//! FLAC encoder for transcription uploads
 //!
-//! FLAC provides lossless compression, giving Gemini the highest
-//! quality audio input while still being compressed (~40% of WAV size).
+//! FLAC provides lossless compression, giving the transcription API the
+//! highest quality audio input while keeping uploads compact (~40% of WAV size).
 //!
 //! Settings:
 //! - 16kHz sample rate (speech-optimized)

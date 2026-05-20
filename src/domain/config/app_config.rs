@@ -1,11 +1,58 @@
 //! Application configuration value object
 
-use std::path::PathBuf;
+use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
 use crate::domain::recording::Duration;
-use crate::domain::transcription::DomainId;
+
+/// Auth mode selecting which transcription backend to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuthMode {
+    /// ChatGPT subscription via the Codex OAuth client.
+    #[default]
+    Oauth,
+    /// OpenAI API key against `api.openai.com/v1/audio/transcriptions`.
+    ApiKey,
+}
+
+impl AuthMode {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Oauth => "oauth",
+            Self::ApiKey => "api_key",
+        }
+    }
+}
+
+impl fmt::Display for AuthMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AuthMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "oauth" | "chatgpt" => Ok(Self::Oauth),
+            "api_key" | "api-key" | "apikey" | "openai" => Ok(Self::ApiKey),
+            other => Err(format!(
+                "Invalid auth mode '{other}'. Valid options: oauth, api_key"
+            )),
+        }
+    }
+}
+
+/// Default transcription model.
+///
+/// `gpt-4o-transcribe` is OpenAI's highest-accuracy speech-to-text model
+/// (lower word error rate than `whisper-1` and `gpt-4o-mini-transcribe`).
+/// Both auth paths accept it; OAuth users pay nothing extra, API-key users
+/// pay the same per-minute rate as `whisper-1`.
+pub const DEFAULT_OPENAI_TRANSCRIBE_MODEL: &str = "gpt-4o-transcribe";
 
 /// Linux-specific configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -29,12 +76,24 @@ pub struct WindowsConfig {
 /// All fields are optional to support partial configs and merging.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub api_key: Option<String>,
-    pub backend: Option<String>,
-    pub chatgpt_cookie_file: Option<String>,
+    /// Auth mode: "oauth" (default) or "api_key".
+    pub auth: Option<String>,
+    /// OpenAI API key, used when `auth = "api_key"`.
+    pub openai_api_key: Option<String>,
+    /// Transcription model. Applies to both auth modes; the OAuth
+    /// `/backend-api/transcribe` endpoint accepts the same `model` field as
+    /// the public API.
+    pub openai_transcribe_model: Option<String>,
+    /// Optional prompt sent as the `prompt` form field. Per OpenAI's docs
+    /// this is the most effective lever for fixing proper nouns and
+    /// jargon. Keep it short; ~224 tokens max on whisper-1.
+    pub transcribe_prompt: Option<String>,
+    /// Optional ISO 639-1 language hint (`en`, `es`, ...) sent as the
+    /// `language` form field. Improves accuracy and reduces hallucination,
+    /// especially on short audio. Leave unset for auto-detect.
+    pub transcribe_language: Option<String>,
     pub duration: Option<String>,
     pub max_duration: Option<String>,
-    pub domain: Option<String>,
     pub clipboard: Option<bool>,
     pub keystroke: Option<bool>,
     pub notify: Option<bool>,
@@ -47,12 +106,13 @@ impl AppConfig {
     /// Create config with default values
     pub fn defaults() -> Self {
         Self {
-            api_key: None,
-            backend: Some("gemini".to_string()),
-            chatgpt_cookie_file: None,
+            auth: Some(AuthMode::default().to_string()),
+            openai_api_key: None,
+            openai_transcribe_model: Some(DEFAULT_OPENAI_TRANSCRIBE_MODEL.to_string()),
+            transcribe_prompt: None,
+            transcribe_language: None,
             duration: None,
             max_duration: None,
-            domain: Some("general".to_string()),
             clipboard: Some(false),
             keystroke: Some(false),
             notify: Some(false),
@@ -79,12 +139,15 @@ impl AppConfig {
     /// Only non-None values from other will override this.
     pub fn merge(self, other: Self) -> Self {
         Self {
-            api_key: other.api_key.or(self.api_key),
-            backend: other.backend.or(self.backend),
-            chatgpt_cookie_file: other.chatgpt_cookie_file.or(self.chatgpt_cookie_file),
+            auth: other.auth.or(self.auth),
+            openai_api_key: other.openai_api_key.or(self.openai_api_key),
+            openai_transcribe_model: other
+                .openai_transcribe_model
+                .or(self.openai_transcribe_model),
+            transcribe_prompt: other.transcribe_prompt.or(self.transcribe_prompt),
+            transcribe_language: other.transcribe_language.or(self.transcribe_language),
             duration: other.duration.or(self.duration),
             max_duration: other.max_duration.or(self.max_duration),
-            domain: other.domain.or(self.domain),
             clipboard: other.clipboard.or(self.clipboard),
             keystroke: other.keystroke.or(self.keystroke),
             notify: other.notify.or(self.notify),
@@ -128,21 +191,36 @@ impl AppConfig {
         }
     }
 
-    /// Get backend, or "gemini" if not set
-    pub fn backend_or_default(&self) -> &str {
-        self.backend.as_deref().unwrap_or("gemini")
+    /// Parse `auth` field. Falls back to [`AuthMode::default`] on missing or
+    /// invalid values.
+    pub fn auth_or_default(&self) -> AuthMode {
+        self.auth
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_default()
     }
 
-    /// Get ChatGPT cookie file path, or default platform config path
-    pub fn chatgpt_cookie_file_or_default(&self) -> PathBuf {
-        if let Some(ref path) = self.chatgpt_cookie_file {
-            PathBuf::from(path)
-        } else {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("smart-scribe")
-                .join("chatgpt-cookies.json")
-        }
+    /// Get the configured OpenAI transcription model, or the default if unset.
+    pub fn openai_transcribe_model_or_default(&self) -> &str {
+        self.openai_transcribe_model
+            .as_deref()
+            .unwrap_or(DEFAULT_OPENAI_TRANSCRIBE_MODEL)
+    }
+
+    /// Get the optional transcribe prompt, treating empty as None.
+    pub fn transcribe_prompt_some(&self) -> Option<&str> {
+        self.transcribe_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Get the optional language hint, lower-cased and trimmed.
+    pub fn transcribe_language_some(&self) -> Option<&str> {
+        self.transcribe_language
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 
     /// Get duration as parsed Duration, or default if not set/invalid
@@ -159,14 +237,6 @@ impl AppConfig {
             .as_ref()
             .and_then(|s| s.parse().ok())
             .unwrap_or_else(Duration::default_max_duration)
-    }
-
-    /// Get domain as parsed DomainId, or default if not set/invalid
-    pub fn domain_or_default(&self) -> DomainId {
-        self.domain
-            .as_ref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_default()
     }
 
     /// Get clipboard setting, or false if not set
@@ -247,10 +317,14 @@ mod tests {
     #[test]
     fn defaults_have_expected_values() {
         let config = AppConfig::defaults();
-        assert!(config.api_key.is_none());
+        assert_eq!(config.auth.as_deref(), Some("oauth"));
+        assert_eq!(
+            config.openai_transcribe_model.as_deref(),
+            Some(DEFAULT_OPENAI_TRANSCRIBE_MODEL)
+        );
+        assert!(config.openai_api_key.is_none());
         assert!(config.duration.is_none());
         assert!(config.max_duration.is_none());
-        assert_eq!(config.domain, Some("general".to_string()));
         assert_eq!(config.clipboard, Some(false));
         assert_eq!(config.keystroke, Some(false));
         assert_eq!(config.notify, Some(false));
@@ -269,9 +343,9 @@ mod tests {
     #[test]
     fn empty_has_all_none() {
         let config = AppConfig::empty();
-        assert!(config.api_key.is_none());
+        assert!(config.auth.is_none());
+        assert!(config.openai_api_key.is_none());
         assert!(config.duration.is_none());
-        assert!(config.domain.is_none());
         assert!(config.clipboard.is_none());
         assert!(config.linux.is_none());
         assert!(config.windows.is_none());
@@ -280,30 +354,30 @@ mod tests {
     #[test]
     fn merge_other_takes_precedence() {
         let base = AppConfig {
-            api_key: Some("base_key".to_string()),
+            openai_api_key: Some("base_key".to_string()),
             duration: Some("10s".to_string()),
-            domain: Some("general".to_string()),
+            auth: Some("oauth".to_string()),
             ..Default::default()
         };
 
         let other = AppConfig {
-            api_key: Some("other_key".to_string()),
+            openai_api_key: Some("other_key".to_string()),
             duration: None, // Should not override
-            domain: Some("dev".to_string()),
+            auth: Some("api_key".to_string()),
             ..Default::default()
         };
 
         let merged = base.merge(other);
 
-        assert_eq!(merged.api_key, Some("other_key".to_string()));
+        assert_eq!(merged.openai_api_key, Some("other_key".to_string()));
         assert_eq!(merged.duration, Some("10s".to_string())); // Kept from base
-        assert_eq!(merged.domain, Some("dev".to_string()));
+        assert_eq!(merged.auth.as_deref(), Some("api_key"));
     }
 
     #[test]
     fn merge_preserves_base_when_other_is_none() {
         let base = AppConfig {
-            api_key: Some("key".to_string()),
+            openai_api_key: Some("key".to_string()),
             clipboard: Some(true),
             ..Default::default()
         };
@@ -311,7 +385,7 @@ mod tests {
         let other = AppConfig::empty();
         let merged = base.merge(other);
 
-        assert_eq!(merged.api_key, Some("key".to_string()));
+        assert_eq!(merged.openai_api_key, Some("key".to_string()));
         assert_eq!(merged.clipboard, Some(true));
     }
 
@@ -340,21 +414,23 @@ mod tests {
     }
 
     #[test]
-    fn domain_or_default_parses() {
-        let config = AppConfig {
-            domain: Some("dev".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(config.domain_or_default(), DomainId::Dev);
+    fn auth_mode_parses() {
+        assert_eq!(AuthMode::from_str("oauth"), Ok(AuthMode::Oauth));
+        assert_eq!(AuthMode::from_str("OAuth"), Ok(AuthMode::Oauth));
+        assert_eq!(AuthMode::from_str("api_key"), Ok(AuthMode::ApiKey));
+        assert_eq!(AuthMode::from_str("API-Key"), Ok(AuthMode::ApiKey));
+        assert!(AuthMode::from_str("nope").is_err());
     }
 
     #[test]
-    fn domain_or_default_uses_default_on_invalid() {
-        let config = AppConfig {
-            domain: Some("invalid".to_string()),
+    fn auth_or_default_falls_back_to_oauth() {
+        let config = AppConfig::empty();
+        assert_eq!(config.auth_or_default(), AuthMode::Oauth);
+        let bad = AppConfig {
+            auth: Some("nonsense".into()),
             ..Default::default()
         };
-        assert_eq!(config.domain_or_default(), DomainId::General);
+        assert_eq!(bad.auth_or_default(), AuthMode::Oauth);
     }
 
     #[test]

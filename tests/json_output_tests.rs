@@ -37,5 +37,6 @@ fn config_list_supports_json_output() {
 
     assert_eq!(json["ok"], true);
     assert_eq!(json["action"], "list");
-    assert!(json["values"].get("api_key").is_some());
+    assert!(json["values"].get("auth").is_some());
+    assert!(json["values"].get("openai_api_key").is_some());
 }

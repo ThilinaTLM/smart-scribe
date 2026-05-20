@@ -2,11 +2,11 @@
 name = "smart-scribe"
 version = "0.0.0-dev"
 edition = "2021"
-description = "AI-powered audio transcription CLI with multiple backend support"
+description = "AI-powered audio transcription CLI (ChatGPT subscription via OAuth or OpenAI API key)"
 authors = ["ThilinaTLM"]
 license = "MIT"
 repository = "https://github.com/yourusername/smart-scribe"
-keywords = ["transcription", "audio", "ai", "gemini", "cli"]
+keywords = ["transcription", "audio", "openai", "chatgpt", "cli"]
 categories = ["command-line-utilities", "multimedia::audio"]
 
 [dependencies]
@@ -46,8 +46,13 @@ dirs = "5"
 # Cross-platform audio capture (replaces FFmpeg)
 cpal = "0.15"
 
-# FLAC encoding for Gemini API (lossless, explicitly supported)
+# FLAC encoding for transcription uploads (lossless, well-supported by ChatGPT and OpenAI)
 flacenc = "0.4"
+
+# PKCE OAuth helpers
+sha2 = "0.10"
+rand = "0.8"
+open = "5"
 
 # Cross-platform adapters
 arboard = "3"

@@ -15,30 +15,46 @@ SmartScribe is free and open-source software licensed under the MIT License. Thi
 
 ## Third-Party Services
 
-SmartScribe uses the **Google Gemini API** for audio transcription. When you use SmartScribe:
+SmartScribe transcribes audio by sending it to OpenAI. Two auth paths are available; both target OpenAI services.
 
-- Audio recordings are sent directly from your machine to Google's API servers
-- You provide and manage your own Google API key
-- Google may collect and process data according to their terms of service
+### ChatGPT subscription (OAuth, default)
+
+When `auth = "oauth"`:
+
+- Audio is sent from your machine to `chatgpt.com/backend-api/transcribe`
+- Authentication uses an OAuth Bearer token obtained from `auth.openai.com` via the public Codex CLI OAuth client (the same client used by OpenAI's official Codex CLI)
+- The OAuth token is cached locally; SmartScribe refreshes it automatically and never transmits it anywhere other than to OpenAI
+
+### OpenAI API key
+
+When `auth = "api_key"`:
+
+- Audio is sent from your machine to `api.openai.com/v1/audio/transcriptions`
+- You provide and manage your own OpenAI API key
 
 ### Your Responsibilities
 
 Before using SmartScribe, you should:
 
-1. Review [Google's Privacy Policy](https://policies.google.com/privacy)
-2. Review the [Google Cloud Terms of Service](https://cloud.google.com/terms)
-3. Understand your API key settings and any data retention policies that apply to your Google account
+1. Review [OpenAI's Privacy Policy](https://openai.com/policies/privacy-policy)
+2. Review the [OpenAI Terms of Use](https://openai.com/policies/terms-of-use)
+3. Understand the data-retention settings on your OpenAI / ChatGPT account
 
 ### Disclaimer
 
-The SmartScribe project and its contributors are not responsible for how Google handles data sent through their API. Your use of the Gemini API is governed by your agreement with Google, not with SmartScribe.
+The SmartScribe project and its contributors are not responsible for how OpenAI handles data sent through their services. Your use of OpenAI services is governed by your agreement with OpenAI, not with SmartScribe.
+
+SmartScribe is an unofficial, community-maintained project and is not affiliated with, endorsed by, or sponsored by OpenAI.
 
 ## Local Data
 
 SmartScribe stores the following data locally on your machine:
 
-- **Configuration file**: `~/.config/smart-scribe/config.toml` containing your settings and API key
-- **Temporary audio files**: Created during recording and deleted after transcription
+- **Configuration file**: TOML configuration with your settings (and, optionally, your OpenAI API key)
+- **OAuth token file** (`oauth.json`): cached when `auth = "oauth"`, written with mode `0600` on Unix. Managed via `smart-scribe login` / `smart-scribe logout`.
+- **Temporary audio buffers**: held in memory during a recording session; not written to disk.
+
+Both files live under your platform's per-user config directory (`~/.config/smart-scribe/` on Linux, `~/Library/Application Support/smart-scribe/` on macOS, `%APPDATA%\smart-scribe\` on Windows).
 
 ## Questions
 

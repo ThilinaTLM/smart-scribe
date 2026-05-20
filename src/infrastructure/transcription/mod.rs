@@ -1,7 +1,7 @@
 //! Transcription infrastructure module
 
-mod chatgpt;
-mod gemini;
+mod chatgpt_oauth;
+mod openai_api;
 
-pub use chatgpt::ChatGptTranscriber;
-pub use gemini::GeminiTranscriber;
+pub use chatgpt_oauth::ChatGptOAuthTranscriber;
+pub use openai_api::OpenAiApiTranscriber;

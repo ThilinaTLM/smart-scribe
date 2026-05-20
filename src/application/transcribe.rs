@@ -5,7 +5,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::domain::recording::Duration;
-use crate::domain::transcription::{AudioData, DomainId, SystemPrompt};
+use crate::domain::transcription::AudioData;
 
 use super::ports::{
     AudioRecorder, Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon,
@@ -21,9 +21,6 @@ pub enum TranscribeError {
 
     #[error("Transcription failed: {0}")]
     Transcription(#[from] TranscriptionError),
-
-    #[error("Missing API key. Set GEMINI_API_KEY or configure via 'smart-scribe config set api_key <key>'")]
-    MissingApiKey,
 }
 
 /// Input parameters for the transcribe use case
@@ -31,8 +28,6 @@ pub enum TranscribeError {
 pub struct TranscribeInput {
     /// Recording duration
     pub duration: Duration,
-    /// Domain for transcription context
-    pub domain: DomainId,
     /// Whether to copy result to clipboard
     pub enable_clipboard: bool,
     /// Whether to type result into focused window
@@ -48,7 +43,6 @@ impl Default for TranscribeInput {
     fn default() -> Self {
         Self {
             duration: Duration::default_duration(),
-            domain: DomainId::default(),
             enable_clipboard: false,
             enable_keystroke: false,
             enable_paste: false,
@@ -236,11 +230,8 @@ where
             cb();
         }
 
-        // Build system prompt with domain context
-        let prompt = SystemPrompt::build(input.domain);
-
         // Transcribe
-        let text = self.transcriber.transcribe(&audio, &prompt).await?;
+        let text = self.transcriber.transcribe(&audio).await?;
 
         if let Some(ref cb) = callbacks.on_transcribing_end {
             cb();
@@ -399,11 +390,7 @@ mod tests {
 
     #[async_trait]
     impl Transcriber for MockTranscriber {
-        async fn transcribe(
-            &self,
-            _audio: &AudioData,
-            _prompt: &SystemPrompt,
-        ) -> Result<String, TranscriptionError> {
+        async fn transcribe(&self, _audio: &AudioData) -> Result<String, TranscriptionError> {
             Ok("Test transcription".to_string())
         }
     }
