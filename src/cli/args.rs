@@ -195,7 +195,12 @@ impl std::str::FromStr for IndicatorPosition {
     }
 }
 
-/// Parsed transcribe options (oneshot mode)
+/// Parsed transcribe options (oneshot mode).
+///
+/// `paste` is always present in the struct (Linux-only feature; ignored on
+/// other platforms) to keep this surface portable and to avoid
+/// `#[cfg(target_os = ...)]` spreading into callers. The CLI flag is still
+/// Linux-gated; non-Linux builds always set `paste = false`.
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
     pub output: OutputFormatArg,
@@ -204,13 +209,13 @@ pub struct TranscribeOptions {
     pub clipboard: bool,
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
-    #[cfg(target_os = "linux")]
     pub paste: bool,
     pub notify: bool,
     pub audio_cue: bool,
 }
 
-/// Parsed daemon options
+/// Parsed daemon options. Same portability rationale as
+/// [`TranscribeOptions`].
 #[derive(Debug, Clone)]
 pub struct DaemonOptions {
     pub output: OutputFormatArg,
@@ -218,7 +223,6 @@ pub struct DaemonOptions {
     pub clipboard: bool,
     pub keystroke: bool,
     pub keystroke_tool: Option<String>,
-    #[cfg(target_os = "linux")]
     pub paste: bool,
     pub notify: bool,
     pub audio_cue: bool,
@@ -228,49 +232,9 @@ pub struct DaemonOptions {
     pub indicator_position: IndicatorPosition,
 }
 
-/// Valid auth-mode values.
-pub const VALID_AUTH_MODES: &[&str] = &["oauth", "api_key"];
-
-/// Valid config keys.
-///
-/// The TOML schema is intentionally portable: `AppConfig` always carries both
-/// `linux` and `windows` sub-tables on every platform, so the same config file
-/// can target multiple machines. Validation is platform-independent for that
-/// reason; runtime gating still applies the appropriate feature per OS.
-pub const VALID_CONFIG_KEYS: &[&str] = &[
-    "auth",
-    "openai_api_key",
-    "openai_transcribe_model",
-    "transcribe_prompt",
-    "transcribe_language",
-    "duration",
-    "max_duration",
-    "clipboard",
-    "keystroke",
-    "notify",
-    "audio_cue",
-    "linux.keystroke_tool",
-    "linux.indicator",
-    "linux.indicator_position",
-    "linux.paste",
-    "windows.indicator",
-    "windows.show_balloon",
-];
-
-/// Default keystroke tool name.
-pub const KEYSTROKE_TOOL_ENIGO: &str = "enigo";
-
-/// Valid keystroke tool values.
-///
-/// `enigo` works on every platform; the remaining tools are Linux-only at
-/// runtime but stay valid in the schema so a portable config can target Linux
-/// from Windows/macOS.
-pub const VALID_KEYSTROKE_TOOLS: &[&str] = &["enigo", "auto", "ydotool", "xdotool", "wtype"];
-
-/// Check if a config key is valid
-pub fn is_valid_config_key(key: &str) -> bool {
-    VALID_CONFIG_KEYS.contains(&key)
-}
+// Configuration-key validation lives in [`super::config_schema`]; the CLI
+// parser only needs to recognise free-form key strings here and delegate to
+// the schema at run time.
 
 #[cfg(test)]
 mod tests {
@@ -398,23 +362,25 @@ mod tests {
 
     #[test]
     fn valid_config_keys() {
+        use crate::cli::config_schema;
         // Portable schema: every documented key is valid on every platform.
         // Runtime gating still applies the appropriate feature per OS.
-        assert!(is_valid_config_key("auth"));
-        assert!(is_valid_config_key("openai_api_key"));
-        assert!(is_valid_config_key("openai_transcribe_model"));
-        assert!(is_valid_config_key("duration"));
-        assert!(is_valid_config_key("linux.keystroke_tool"));
-        assert!(is_valid_config_key("linux.indicator"));
-        assert!(is_valid_config_key("linux.indicator_position"));
-        assert!(is_valid_config_key("linux.paste"));
-        assert!(is_valid_config_key("windows.indicator"));
-        assert!(is_valid_config_key("windows.show_balloon"));
-        assert!(!is_valid_config_key("api_key"));
-        assert!(!is_valid_config_key("backend"));
-        assert!(!is_valid_config_key("domain"));
-        assert!(!is_valid_config_key("chatgpt_cookie_file"));
-        assert!(!is_valid_config_key("invalid_key"));
+        assert!(config_schema::find("auth").is_some());
+        assert!(config_schema::find("openai_api_key").is_some());
+        assert!(config_schema::find("openai_transcribe_model").is_some());
+        assert!(config_schema::find("duration").is_some());
+        assert!(config_schema::find("linux.keystroke_tool").is_some());
+        assert!(config_schema::find("linux.indicator").is_some());
+        assert!(config_schema::find("linux.indicator_position").is_some());
+        assert!(config_schema::find("linux.paste").is_some());
+        assert!(config_schema::find("windows.indicator").is_some());
+        assert!(config_schema::find("windows.show_balloon").is_some());
+        // Legacy keys are unknown.
+        assert!(config_schema::find("api_key").is_none());
+        assert!(config_schema::find("backend").is_none());
+        assert!(config_schema::find("domain").is_none());
+        assert!(config_schema::find("chatgpt_cookie_file").is_none());
+        assert!(config_schema::find("invalid_key").is_none());
     }
 
     #[test]

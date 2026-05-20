@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use tokio::fs;
 
 use crate::application::ports::ConfigStore;
-use crate::domain::config::AppConfig;
+use crate::domain::config::RawAppConfig;
 use crate::domain::error::ConfigError;
 
 /// Legacy keys removed in the OpenAI-only rewrite.
@@ -45,18 +45,13 @@ impl XdgConfigStore {
         Self { path: path.into() }
     }
 
-    /// Parse TOML content into AppConfig.
+    /// Parse TOML content into [`RawAppConfig`].
     ///
-    /// Legacy keys are silently dropped here (they no longer exist in
-    /// [`AppConfig`]). User-facing notice is handled by [`Self::load`] which
-    /// also rewrites the file.
-    fn parse_toml(
-        content: &str,
-        _path_for_warning: Option<&PathBuf>,
-    ) -> Result<AppConfig, ConfigError> {
-        let config: AppConfig =
-            toml::from_str(content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
-        Ok(config)
+    /// Legacy keys are silently dropped here (they no longer exist in the
+    /// raw schema). The user-facing notice is emitted by [`Self::load`],
+    /// which also rewrites the file once.
+    fn parse_toml(content: &str) -> Result<RawAppConfig, ConfigError> {
+        toml::from_str(content).map_err(|e| ConfigError::ParseError(e.to_string()))
     }
 
     /// Surgically remove top-level legacy keys from a TOML document.
@@ -92,8 +87,8 @@ impl XdgConfigStore {
         (output, removed)
     }
 
-    /// Serialize AppConfig to TOML
-    fn to_toml(config: &AppConfig) -> Result<String, ConfigError> {
+    /// Serialise [`RawAppConfig`] to TOML.
+    fn to_toml(config: &RawAppConfig) -> Result<String, ConfigError> {
         toml::to_string_pretty(config).map_err(|e| ConfigError::WriteError(e.to_string()))
     }
 }
@@ -106,10 +101,10 @@ impl Default for XdgConfigStore {
 
 #[async_trait]
 impl ConfigStore for XdgConfigStore {
-    async fn load(&self) -> Result<AppConfig, ConfigError> {
+    async fn load(&self) -> Result<RawAppConfig, ConfigError> {
         if !self.exists() {
             // Return empty config if file doesn't exist
-            return Ok(AppConfig::empty());
+            return Ok(RawAppConfig::empty());
         }
 
         let content = fs::read_to_string(&self.path)
@@ -132,10 +127,10 @@ impl ConfigStore for XdgConfigStore {
             }
         }
 
-        Self::parse_toml(&cleaned, Some(&self.path))
+        Self::parse_toml(&cleaned)
     }
 
-    async fn save(&self, config: &AppConfig) -> Result<(), ConfigError> {
+    async fn save(&self, config: &RawAppConfig) -> Result<(), ConfigError> {
         // Ensure parent directory exists
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)
@@ -167,7 +162,7 @@ impl ConfigStore for XdgConfigStore {
             ));
         }
 
-        let defaults = AppConfig::defaults();
+        let defaults = RawAppConfig::defaults();
         self.save(&defaults).await
     }
 }
@@ -199,7 +194,7 @@ duration = "30s"
 clipboard = true
 "#;
 
-        let config = XdgConfigStore::parse_toml(content, None).unwrap();
+        let config = XdgConfigStore::parse_toml(content).unwrap();
         assert_eq!(config.auth.as_deref(), Some("oauth"));
         assert_eq!(config.openai_api_key.as_deref(), Some("sk-test"));
         assert_eq!(config.duration, Some("30s".to_string()));
@@ -215,9 +210,10 @@ chatgpt_cookie_file = "/tmp/cookies.json"
 domain = "dev"
 auth = "oauth"
 "#;
-        let config = XdgConfigStore::parse_toml(content, None).unwrap();
+        // Legacy keys are unknown fields in RawAppConfig; serde silently
+        // drops them unless we tell it otherwise.
+        let config = XdgConfigStore::parse_toml(content).unwrap();
         assert_eq!(config.auth.as_deref(), Some("oauth"));
-        // Legacy fields are not present in AppConfig anymore.
     }
 
     #[test]
@@ -343,7 +339,7 @@ api_key = "keep-me"
 
     #[test]
     fn to_toml_round_trip() {
-        let config = AppConfig {
+        let config = RawAppConfig {
             auth: Some("api_key".to_string()),
             openai_api_key: Some("sk-test".to_string()),
             duration: Some("30s".to_string()),
@@ -352,7 +348,7 @@ api_key = "keep-me"
         };
 
         let toml = XdgConfigStore::to_toml(&config).unwrap();
-        let parsed = XdgConfigStore::parse_toml(&toml, None).unwrap();
+        let parsed = XdgConfigStore::parse_toml(&toml).unwrap();
 
         assert_eq!(config.auth, parsed.auth);
         assert_eq!(config.openai_api_key, parsed.openai_api_key);

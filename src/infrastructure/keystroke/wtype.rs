@@ -37,17 +37,23 @@ impl Keystroke for WtypeKeystroke {
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    KeystrokeError::WtypeNotFound
+                    KeystrokeError::BackendUnavailable {
+                        tool: "wtype".to_string(),
+                        reason: "command not found; install wtype for Wayland support".to_string(),
+                    }
                 } else {
-                    KeystrokeError::TypeFailed(e.to_string())
+                    KeystrokeError::TypeFailed {
+                        tool: "wtype".to_string(),
+                        reason: e.to_string(),
+                    }
                 }
             })?;
 
         if !status.success() {
-            return Err(KeystrokeError::TypeFailed(format!(
-                "wtype exited with status: {}",
-                status
-            )));
+            return Err(KeystrokeError::TypeFailed {
+                tool: "wtype".to_string(),
+                reason: format!("exited with status: {}", status),
+            });
         }
 
         Ok(())

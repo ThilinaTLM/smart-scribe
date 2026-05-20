@@ -7,18 +7,19 @@ pub mod app;
 pub mod args;
 pub mod auth_cmd;
 pub mod config_cmd;
+pub mod config_schema;
 pub mod daemon_app;
 pub mod daemon_cmd;
+pub mod exit_codes;
 pub mod ipc;
 pub mod output;
 pub mod pid_file;
 pub mod presenter;
+pub mod runtime;
 pub mod signals;
-#[cfg(unix)]
-pub mod socket;
 
 // Re-export commonly used types
-pub use app::{run_oneshot, EXIT_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR};
+pub use app::run_oneshot;
 #[cfg(target_os = "linux")]
 pub use args::IndicatorPosition;
 pub use args::{

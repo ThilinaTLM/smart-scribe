@@ -32,7 +32,10 @@ impl Keystroke for EnigoKeystroke {
             use enigo::{Enigo, Keyboard, Settings};
 
             let mut enigo = Enigo::new(&Settings::default()).map_err(|e| {
-                KeystrokeError::TypeFailed(format!("Failed to create enigo: {}", e))
+                KeystrokeError::BackendUnavailable {
+                    tool: "enigo".to_string(),
+                    reason: format!("failed to initialise enigo: {}", e),
+                }
             })?;
 
             // On Linux, enigo sends events via XWayland which drops keystrokes.
@@ -56,20 +59,28 @@ impl Keystroke for EnigoKeystroke {
                         // equivalent whose keycode IS found at level 0.
                         let lowercase = ch.to_lowercase().next().unwrap_or(ch);
                         enigo.key(Key::Shift, Direction::Press).map_err(|e| {
-                            KeystrokeError::TypeFailed(format!("Failed to press Shift: {}", e))
+                            KeystrokeError::TypeFailed {
+                                tool: "enigo".to_string(),
+                                reason: format!("failed to press Shift: {}", e),
+                            }
                         })?;
                         enigo
                             .key(Key::Unicode(lowercase), Direction::Click)
-                            .map_err(|e| {
-                                KeystrokeError::TypeFailed(format!("Failed to type char: {}", e))
+                            .map_err(|e| KeystrokeError::TypeFailed {
+                                tool: "enigo".to_string(),
+                                reason: format!("failed to type char: {}", e),
                             })?;
                         enigo.key(Key::Shift, Direction::Release).map_err(|e| {
-                            KeystrokeError::TypeFailed(format!("Failed to release Shift: {}", e))
+                            KeystrokeError::TypeFailed {
+                                tool: "enigo".to_string(),
+                                reason: format!("failed to release Shift: {}", e),
+                            }
                         })?;
                     } else {
                         let s = ch.to_string();
-                        enigo.text(&s).map_err(|e| {
-                            KeystrokeError::TypeFailed(format!("Failed to type text: {}", e))
+                        enigo.text(&s).map_err(|e| KeystrokeError::TypeFailed {
+                            tool: "enigo".to_string(),
+                            reason: format!("failed to type text: {}", e),
                         })?;
                     }
                     thread::sleep(Duration::from_millis(2));
@@ -80,13 +91,17 @@ impl Keystroke for EnigoKeystroke {
 
             #[cfg(not(target_os = "linux"))]
             {
-                enigo
-                    .text(&text)
-                    .map_err(|e| KeystrokeError::TypeFailed(format!("Failed to type text: {}", e)))
+                enigo.text(&text).map_err(|e| KeystrokeError::TypeFailed {
+                    tool: "enigo".to_string(),
+                    reason: format!("failed to type text: {}", e),
+                })
             }
         })
         .await
-        .map_err(|e| KeystrokeError::TypeFailed(format!("Task join error: {}", e)))?
+        .map_err(|e| KeystrokeError::TypeFailed {
+            tool: "enigo".to_string(),
+            reason: format!("task join error: {}", e),
+        })?
     }
 }
 

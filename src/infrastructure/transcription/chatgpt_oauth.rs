@@ -14,6 +14,8 @@ use crate::application::ports::{Transcriber, TranscriptionError};
 use crate::domain::transcription::AudioData;
 use crate::infrastructure::auth::{refresh, OAuthStore, OAuthToken};
 
+use super::{parse_transcription_response, shared_client};
+
 const TRANSCRIBE_URL: &str = "https://chatgpt.com/backend-api/transcribe";
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const REFRESH_LEAD_SECS: i64 = 60;
@@ -39,7 +41,7 @@ impl ChatGptOAuthTranscriber {
     pub fn new(store: OAuthStore, model: impl Into<String>) -> Self {
         Self {
             store,
-            client: reqwest::Client::new(),
+            client: shared_client(),
             device_id: Uuid::new_v4().to_string(),
             model: model.into(),
             prompt: None,
@@ -96,13 +98,9 @@ impl ChatGptOAuthTranscriber {
                 .as_ref()
                 .map(|t| t.refresh_token.clone())
                 .ok_or(TranscriptionError::NotAuthenticated)?;
-            let fresh = refresh(&refresh_token).await.map_err(|e| {
-                use crate::infrastructure::auth::OAuthError;
-                match e {
-                    OAuthError::InvalidGrant => TranscriptionError::NotAuthenticated,
-                    other => TranscriptionError::RequestFailed(other.to_string()),
-                }
-            })?;
+            // The From<OAuthError> impl in `auth/error.rs` collapses
+            // InvalidGrant -> NotAuthenticated for us.
+            let fresh = refresh(&refresh_token).await?;
             self.store
                 .save(&fresh)
                 .map_err(|e| TranscriptionError::RequestFailed(e.to_string()))?;
@@ -193,40 +191,7 @@ async fn send_transcribe(
         .await
         .map_err(|e| TranscriptionError::RequestFailed(e.to_string()))?;
 
-    let status = response.status();
-
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(TranscriptionError::InvalidApiKey);
-    }
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(TranscriptionError::RateLimited);
-    }
-    if !status.is_success() {
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(TranscriptionError::ApiError(format!(
-            "HTTP {status}: {error_text}"
-        )));
-    }
-
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| TranscriptionError::ParseError(e.to_string()))?;
-
-    let text = body
-        .get("text")
-        .and_then(|v| v.as_str())
-        .ok_or(TranscriptionError::EmptyResponse)?;
-
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err(TranscriptionError::EmptyResponse);
-    }
-
-    Ok(trimmed.to_string())
+    parse_transcription_response(response).await
 }
 
 #[async_trait]

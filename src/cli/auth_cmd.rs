@@ -8,10 +8,8 @@ use crate::domain::config::{AppConfig, AuthMode};
 use crate::infrastructure::auth::{import_from_codex, run_pkce_login, OAuthStore};
 
 use super::args::OutputFormatArg;
+use super::exit_codes;
 use super::presenter::Presenter;
-
-const EXIT_OK: u8 = 0;
-const EXIT_FAIL: u8 = 1;
 
 /// Run the OAuth login flow and persist the token.
 pub async fn run_login(from_codex: bool, output: OutputFormatArg) -> ExitCode {
@@ -21,7 +19,7 @@ pub async fn run_login(from_codex: bool, output: OutputFormatArg) -> ExitCode {
         Ok(s) => s,
         Err(e) => {
             presenter.error(&format!("OAuth store init failed: {e}"));
-            return ExitCode::from(EXIT_FAIL);
+            return ExitCode::from(exit_codes::ERROR);
         }
     };
 
@@ -35,13 +33,13 @@ pub async fn run_login(from_codex: bool, output: OutputFormatArg) -> ExitCode {
         Ok(t) => t,
         Err(e) => {
             presenter.error(&format!("Login failed: {e}"));
-            return ExitCode::from(EXIT_FAIL);
+            return ExitCode::from(exit_codes::ERROR);
         }
     };
 
     if let Err(e) = store.save(&token) {
         presenter.error(&format!("Could not save token: {e}"));
-        return ExitCode::from(EXIT_FAIL);
+        return ExitCode::from(exit_codes::ERROR);
     }
 
     if presenter.is_json() {
@@ -65,7 +63,7 @@ pub async fn run_login(from_codex: bool, output: OutputFormatArg) -> ExitCode {
         }
     }
 
-    ExitCode::from(EXIT_OK)
+    ExitCode::from(exit_codes::SUCCESS)
 }
 
 /// Delete the persisted OAuth token (idempotent).
@@ -76,13 +74,13 @@ pub async fn run_logout(output: OutputFormatArg) -> ExitCode {
         Ok(s) => s,
         Err(e) => {
             presenter.error(&format!("OAuth store init failed: {e}"));
-            return ExitCode::from(EXIT_FAIL);
+            return ExitCode::from(exit_codes::ERROR);
         }
     };
 
     if let Err(e) = store.delete() {
         presenter.error(&format!("Could not delete token: {e}"));
-        return ExitCode::from(EXIT_FAIL);
+        return ExitCode::from(exit_codes::ERROR);
     }
 
     if presenter.is_json() {
@@ -94,14 +92,14 @@ pub async fn run_logout(output: OutputFormatArg) -> ExitCode {
         presenter.success("Logged out. OAuth token removed.");
     }
 
-    ExitCode::from(EXIT_OK)
+    ExitCode::from(exit_codes::SUCCESS)
 }
 
 /// Print the current authentication status.
 pub async fn run_auth_status(config: &AppConfig, output: OutputFormatArg) -> ExitCode {
     let presenter = Presenter::new(output);
 
-    let mode = config.auth_or_default();
+    let mode = config.auth;
 
     let store = OAuthStore::new().ok();
     let token = store.as_ref().and_then(|s| s.load().ok().flatten());
@@ -132,9 +130,9 @@ pub async fn run_auth_status(config: &AppConfig, output: OutputFormatArg) -> Exi
             "oauth_account_id": account_id,
             "openai_api_key_env": openai_env,
             "openai_api_key_config": openai_in_config,
-            "openai_transcribe_model": config.openai_transcribe_model_or_default(),
+            "openai_transcribe_model": &config.openai_transcribe_model,
         }));
-        return ExitCode::from(EXIT_OK);
+        return ExitCode::from(exit_codes::SUCCESS);
     }
 
     presenter.key_value("auth", mode.as_str());
@@ -170,14 +168,11 @@ pub async fn run_auth_status(config: &AppConfig, output: OutputFormatArg) -> Exi
                     "missing"
                 },
             );
-            presenter.key_value(
-                "openai_transcribe_model",
-                config.openai_transcribe_model_or_default(),
-            );
+            presenter.key_value("openai_transcribe_model", &config.openai_transcribe_model);
         }
     }
 
-    ExitCode::from(EXIT_OK)
+    ExitCode::from(exit_codes::SUCCESS)
 }
 
 /// Build a one-line auth-status banner for the startup logs (one-shot and daemon).
@@ -187,7 +182,7 @@ pub async fn run_auth_status(config: &AppConfig, output: OutputFormatArg) -> Exi
 /// model. Output goes to stderr alongside the other startup lines
 /// (`Keystroke: using ...`, `Paste: using ...`).
 pub fn describe_auth(config: &AppConfig) -> String {
-    let model = config.openai_transcribe_model_or_default();
+    let model = &config.openai_transcribe_model;
     let mut extras = Vec::new();
     if let Some(lang) = config.transcribe_language_some() {
         extras.push(format!("lang: {lang}"));
@@ -200,7 +195,7 @@ pub fn describe_auth(config: &AppConfig) -> String {
     } else {
         format!(", {}", extras.join(", "))
     };
-    match config.auth_or_default() {
+    match config.auth {
         AuthMode::Oauth => {
             let store = match OAuthStore::new() {
                 Ok(s) => s,
@@ -265,9 +260,11 @@ mod tests {
 
     #[test]
     fn describe_auth_api_key_mentions_model() {
-        let mut cfg = AppConfig::empty();
-        cfg.auth = Some(AuthMode::ApiKey.to_string());
-        cfg.openai_transcribe_model = Some("whisper-1".into());
+        let cfg = AppConfig {
+            auth: AuthMode::ApiKey,
+            openai_transcribe_model: "whisper-1".into(),
+            ..Default::default()
+        };
         let line = describe_auth(&cfg);
         assert!(line.starts_with("Auth: OpenAI API key"));
         assert!(line.contains("whisper-1"), "got: {line}");
@@ -277,8 +274,10 @@ mod tests {
     fn describe_auth_oauth_default_mentions_subscription_and_model() {
         // No token will typically be present in the test env. The banner
         // should still mention the ChatGPT subscription path and selected model.
-        let mut cfg = AppConfig::empty();
-        cfg.openai_transcribe_model = Some("gpt-4o-transcribe".into());
+        let cfg = AppConfig {
+            openai_transcribe_model: "gpt-4o-transcribe".into(),
+            ..Default::default()
+        };
         let line = describe_auth(&cfg);
         assert!(
             line.starts_with("Auth: ChatGPT subscription"),

@@ -5,6 +5,10 @@ use thiserror::Error;
 
 use serde::{Deserialize, Serialize};
 
+// Note: JSON serialization helpers live in the presentation layer
+// (`cli::output`). Domain types stay free of wire-format concerns; they only
+// derive `Serialize`/`Deserialize` so the presentation layer can use them.
+
 /// Daemon states
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -26,11 +30,6 @@ impl StateUpdate {
     /// Create a new state update
     pub fn new(state: DaemonState, elapsed_ms: u64) -> Self {
         Self { state, elapsed_ms }
-    }
-
-    /// Serialize to JSON line (with newline)
-    pub fn to_json_line(&self) -> String {
-        format!("{}\n", serde_json::to_string(self).unwrap_or_default())
     }
 }
 
@@ -67,6 +66,7 @@ pub struct InvalidStateTransition {
 ///   RECORDING -> PROCESSING (stop_recording)
 ///   RECORDING -> IDLE (cancel_recording)
 ///   PROCESSING -> IDLE (complete_processing)
+///   PROCESSING -> IDLE (fail_processing) - error rollback
 #[derive(Debug, Default)]
 pub struct DaemonSession {
     state: DaemonState,
@@ -136,12 +136,28 @@ impl DaemonSession {
         Ok(())
     }
 
-    /// Transition from PROCESSING to IDLE
+    /// Transition from PROCESSING to IDLE on success.
     pub fn complete_processing(&mut self) -> Result<(), InvalidStateTransition> {
         if self.state != DaemonState::Processing {
             return Err(InvalidStateTransition {
                 current_state: self.state,
                 action: "complete processing".to_string(),
+            });
+        }
+        self.state = DaemonState::Idle;
+        Ok(())
+    }
+
+    /// Transition from PROCESSING to IDLE on transcription failure.
+    ///
+    /// Distinct from [`complete_processing`](Self::complete_processing) so
+    /// tests and observers can tell success from failure rollback. The state
+    /// table is the same; this is purely a labelling distinction.
+    pub fn fail_processing(&mut self) -> Result<(), InvalidStateTransition> {
+        if self.state != DaemonState::Processing {
+            return Err(InvalidStateTransition {
+                current_state: self.state,
+                action: "fail processing".to_string(),
             });
         }
         self.state = DaemonState::Idle;
@@ -288,10 +304,9 @@ mod tests {
     #[test]
     fn state_update_json_serialization() {
         let update = StateUpdate::new(DaemonState::Recording, 1500);
-        let json = update.to_json_line();
+        let json = serde_json::to_string(&update).unwrap();
         assert!(json.contains("\"state\":\"recording\""));
         assert!(json.contains("\"elapsed_ms\":1500"));
-        assert!(json.ends_with('\n'));
     }
 
     #[test]
@@ -305,8 +320,8 @@ mod tests {
     #[test]
     fn state_update_roundtrip() {
         let original = StateUpdate::new(DaemonState::Idle, 0);
-        let json = original.to_json_line();
-        let parsed: StateUpdate = serde_json::from_str(json.trim()).unwrap();
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: StateUpdate = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.state, original.state);
         assert_eq!(parsed.elapsed_ms, original.elapsed_ms);
     }

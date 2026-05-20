@@ -4,10 +4,8 @@
 //! or platform-specific tools as fallback.
 
 mod notify_rust;
-mod notify_send;
 
 pub use notify_rust::NotifyRustNotifier;
-pub use notify_send::NotifySendNotifier;
 
 use crate::application::ports::Notifier;
 

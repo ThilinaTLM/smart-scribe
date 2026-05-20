@@ -63,7 +63,10 @@ impl SmartPaste for KdotoolSmartPaste {
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    SmartPasteError::KdotoolNotFound
+                    SmartPasteError::BackendUnavailable {
+                        tool: "kdotool".to_string(),
+                        reason: "command not found; install kdotool for KDE Plasma".to_string(),
+                    }
                 } else {
                     SmartPasteError::PasteFailed(format!("kdotool failed: {}", e))
                 }
@@ -153,7 +156,10 @@ async fn set_clipboard(text: &str) -> Result<(), SmartPasteError> {
         .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                SmartPasteError::WlCopyNotFound
+                SmartPasteError::BackendUnavailable {
+                    tool: "wl-copy".to_string(),
+                    reason: "command not found; install wl-clipboard".to_string(),
+                }
             } else {
                 SmartPasteError::PasteFailed(format!("wl-copy failed: {}", e))
             }
@@ -252,7 +258,10 @@ async fn send_paste_key(is_terminal: bool) -> Result<(), SmartPasteError> {
         .await
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                SmartPasteError::YdotoolNotAvailable
+                SmartPasteError::BackendUnavailable {
+                    tool: "ydotool".to_string(),
+                    reason: "command not found or ydotoold socket missing".to_string(),
+                }
             } else {
                 SmartPasteError::PasteFailed(format!("ydotool failed: {}", e))
             }

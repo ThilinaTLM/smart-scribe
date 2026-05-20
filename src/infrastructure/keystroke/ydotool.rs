@@ -37,17 +37,23 @@ impl Keystroke for YdotoolKeystroke {
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    KeystrokeError::YdotoolNotAvailable
+                    KeystrokeError::BackendUnavailable {
+                        tool: "ydotool".to_string(),
+                        reason: "command not found; install ydotool and run ydotoold".to_string(),
+                    }
                 } else {
-                    KeystrokeError::TypeFailed(e.to_string())
+                    KeystrokeError::TypeFailed {
+                        tool: "ydotool".to_string(),
+                        reason: e.to_string(),
+                    }
                 }
             })?;
 
         if !status.success() {
-            return Err(KeystrokeError::TypeFailed(format!(
-                "ydotool exited with status: {}",
-                status
-            )));
+            return Err(KeystrokeError::TypeFailed {
+                tool: "ydotool".to_string(),
+                reason: format!("exited with status: {}", status),
+            });
         }
 
         Ok(())

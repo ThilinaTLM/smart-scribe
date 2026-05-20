@@ -5,6 +5,21 @@ use serde::{Deserialize, Serialize};
 use crate::application::{DaemonOutput, TranscribeOutput};
 use crate::domain::daemon::{DaemonState, StateUpdate};
 
+/// Format a byte count as a short human-readable string
+/// (e.g. `"500 B"`, `"2.0 KB"`, `"2.0 MB"`).
+///
+/// Lives in the CLI layer because the chosen format is a presentation concern
+/// (different output formats / locales may render differently).
+pub fn format_audio_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OneshotResponse {
     pub ok: bool,
@@ -22,7 +37,7 @@ impl From<TranscribeOutput> for OneshotResponse {
             ok: true,
             mode: "oneshot",
             text: output.text,
-            audio_size: output.audio_size,
+            audio_size: format_audio_size(output.audio_size_bytes),
             clipboard_copied: output.clipboard_copied,
             keystroke_sent: output.keystroke_sent,
             paste_sent: output.paste_sent,
@@ -107,7 +122,7 @@ impl From<DaemonOutput> for DaemonEvent {
     fn from(output: DaemonOutput) -> Self {
         Self::Result {
             text: output.text,
-            audio_size: output.audio_size,
+            audio_size: format_audio_size(output.audio_size_bytes),
             clipboard_copied: output.clipboard_copied,
             keystroke_sent: output.keystroke_sent,
             paste_sent: output.paste_sent,
@@ -120,13 +135,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn format_audio_size_thresholds() {
+        assert_eq!(format_audio_size(500), "500 B");
+        assert_eq!(format_audio_size(2048), "2.0 KB");
+        assert_eq!(format_audio_size(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
     fn oneshot_response_includes_transcript() {
         let response = OneshotResponse::from(TranscribeOutput {
             text: "hello".to_string(),
             clipboard_copied: true,
             keystroke_sent: false,
             paste_sent: false,
-            audio_size: "10 KB".to_string(),
+            audio_size_bytes: 10 * 1024,
         });
 
         let json = serde_json::to_string(&response).unwrap();
@@ -141,7 +163,7 @@ mod tests {
             clipboard_copied: false,
             keystroke_sent: true,
             paste_sent: false,
-            audio_size: "42 KB".to_string(),
+            audio_size_bytes: 42 * 1024,
         });
 
         let json = serde_json::to_string(&event).unwrap();

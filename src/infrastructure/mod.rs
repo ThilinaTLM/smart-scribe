@@ -12,6 +12,7 @@ pub mod notification;
 pub mod recording;
 pub mod smart_paste;
 pub mod transcription;
+pub mod util;
 
 // Re-export adapters
 pub use audio_cue::{create_audio_cue, NoOpAudioCue, RodioAudioCue};
@@ -22,7 +23,9 @@ pub use keystroke::{
     create_keystroke, detect_keystroke_tool, EnigoKeystroke, KeystrokeTool,
     KeystrokeToolPreference, NoOpKeystroke, ParseKeystrokeToolError, YdotoolKeystroke,
 };
-pub use notification::{create_notifier, NotifyRustNotifier, NotifySendNotifier};
+pub use notification::{create_notifier, NotifyRustNotifier};
 pub use recording::{create_recorder, CpalRecorder};
 pub use smart_paste::{create_smart_paste, NoOpSmartPaste};
-pub use transcription::{ChatGptOAuthTranscriber, OpenAiApiTranscriber};
+pub use transcription::{
+    create_transcriber, ChatGptOAuthTranscriber, OpenAiApiTranscriber, Transcriber,
+};

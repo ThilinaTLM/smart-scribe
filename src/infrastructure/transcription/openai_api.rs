@@ -8,6 +8,8 @@ use async_trait::async_trait;
 use crate::application::ports::{Transcriber, TranscriptionError};
 use crate::domain::transcription::AudioData;
 
+use super::{parse_transcription_response, shared_client};
+
 const TRANSCRIBE_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
 
 pub struct OpenAiApiTranscriber {
@@ -25,7 +27,7 @@ impl OpenAiApiTranscriber {
             model: model.into(),
             prompt: None,
             language: None,
-            client: reqwest::Client::new(),
+            client: shared_client(),
         }
     }
 
@@ -74,40 +76,7 @@ impl Transcriber for OpenAiApiTranscriber {
             .await
             .map_err(|e| TranscriptionError::RequestFailed(e.to_string()))?;
 
-        let status = response.status();
-
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(TranscriptionError::InvalidApiKey);
-        }
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(TranscriptionError::RateLimited);
-        }
-        if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(TranscriptionError::ApiError(format!(
-                "HTTP {status}: {error_text}"
-            )));
-        }
-
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| TranscriptionError::ParseError(e.to_string()))?;
-
-        let text = body
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or(TranscriptionError::EmptyResponse)?;
-
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return Err(TranscriptionError::EmptyResponse);
-        }
-
-        Ok(trimmed.to_string())
+        parse_transcription_response(response).await
     }
 }
 

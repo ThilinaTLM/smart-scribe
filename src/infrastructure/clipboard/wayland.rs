@@ -34,7 +34,10 @@ impl Clipboard for WaylandClipboard {
             .spawn()
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    ClipboardError::WlCopyNotFound
+                    ClipboardError::BackendUnavailable {
+                        tool: "wl-copy".to_string(),
+                        reason: "command not found; install wl-clipboard".to_string(),
+                    }
                 } else {
                     ClipboardError::CopyFailed(e.to_string())
                 }

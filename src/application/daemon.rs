@@ -7,10 +7,12 @@ use tokio::sync::Mutex;
 use crate::domain::daemon::{DaemonSession, DaemonState, InvalidStateTransition};
 use crate::domain::recording::Duration;
 
+use super::output_dispatcher::{dispatch as dispatch_output, OutputOptions};
 use super::ports::{
-    Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon, Notifier,
-    RecordingError, SmartPaste, Transcriber, TranscriptionError, UnboundedRecorder,
+    Clipboard, Keystroke, NotificationIcon, Notifier, RecordingError, SmartPaste, Transcriber,
+    TranscriptionError, UnboundedRecorder,
 };
+use super::{warn, UseCaseDeps, WarningSink};
 
 /// Errors from the daemon use case
 #[derive(Debug, Error)]
@@ -26,7 +28,7 @@ pub enum DaemonError {
 }
 
 /// Configuration for daemon mode
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DaemonConfig {
     /// Maximum recording duration (safety limit)
     pub max_duration: Duration,
@@ -38,6 +40,9 @@ pub struct DaemonConfig {
     pub enable_paste: bool,
     /// Whether to show notifications
     pub enable_notify: bool,
+    /// Optional callback for non-fatal warnings. CLI plugs the presenter in;
+    /// tests leave `None` to discard.
+    pub warning_sink: Option<WarningSink>,
 }
 
 impl Default for DaemonConfig {
@@ -48,7 +53,21 @@ impl Default for DaemonConfig {
             enable_keystroke: false,
             enable_paste: false,
             enable_notify: false,
+            warning_sink: None,
         }
+    }
+}
+
+impl std::fmt::Debug for DaemonConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DaemonConfig")
+            .field("max_duration", &self.max_duration)
+            .field("enable_clipboard", &self.enable_clipboard)
+            .field("enable_keystroke", &self.enable_keystroke)
+            .field("enable_paste", &self.enable_paste)
+            .field("enable_notify", &self.enable_notify)
+            .field("warning_sink", &self.warning_sink.is_some())
+            .finish()
     }
 }
 
@@ -63,8 +82,8 @@ pub struct DaemonOutput {
     pub keystroke_sent: bool,
     /// Whether smart paste succeeded
     pub paste_sent: bool,
-    /// Audio file size
-    pub audio_size: String,
+    /// Audio file size in bytes. Presentation layer formats it.
+    pub audio_size_bytes: u64,
 }
 
 /// Daemon transcription use case
@@ -96,23 +115,16 @@ where
     N: Notifier,
     P: SmartPaste,
 {
-    /// Create a new daemon use case instance
-    pub fn new(
-        recorder: R,
-        transcriber: T,
-        clipboard: C,
-        keystroke: K,
-        notifier: N,
-        smart_paste: P,
-        config: DaemonConfig,
-    ) -> Self {
+    /// Create a new daemon use case from a [`UseCaseDeps`] bundle plus a
+    /// [`DaemonConfig`].
+    pub fn new(deps: UseCaseDeps<R, T, C, K, N, P>, config: DaemonConfig) -> Self {
         Self {
-            recorder,
-            transcriber,
-            clipboard,
-            keystroke,
-            notifier,
-            smart_paste,
+            recorder: deps.recorder,
+            transcriber: deps.transcriber,
+            clipboard: deps.clipboard,
+            keystroke: deps.keystroke,
+            notifier: deps.notifier,
+            smart_paste: deps.smart_paste,
             session: Arc::new(Mutex::new(DaemonSession::new())),
             config,
         }
@@ -123,21 +135,53 @@ where
         self.session.lock().await.state()
     }
 
-    /// Start recording (toggle from idle)
+    /// Start recording (toggle from idle).
+    ///
+    /// Ordering matters here: we run the fallible side-effects (recorder
+    /// start) *before* we promise the world that we're recording, so the
+    /// observable state stays Idle if anything blows up mid-sequence.
     pub async fn start_recording(&self) -> Result<(), DaemonError> {
+        // Pre-flight check so we surface InvalidState early without
+        // starting the recorder. We re-verify under the lock below.
         {
-            let mut session = self.session.lock().await;
-            session.start_recording()?;
-        }
-
-        // Capture active window for smart paste (before recording starts)
-        if self.config.enable_paste {
-            if let Err(e) = self.smart_paste.capture_active_window().await {
-                eprintln!("Warning: failed to capture active window: {}", e);
+            let session = self.session.lock().await;
+            if !session.is_idle() {
+                return Err(InvalidStateTransition {
+                    current_state: session.state(),
+                    action: "start recording".to_string(),
+                }
+                .into());
             }
         }
 
-        // Notify recording start
+        // 1. Capture active window for smart paste. Warning-only — if this
+        //    fails we still want to record; the user just loses paste.
+        if self.config.enable_paste {
+            if let Err(e) = self.smart_paste.capture_active_window().await {
+                warn(
+                    self.config.warning_sink.as_ref(),
+                    &format!("failed to capture active window: {}", e),
+                );
+            }
+        }
+
+        // 2. Start the recorder. Fatal failure mode — if this errors the
+        //    session never transitions to Recording, so callers see Idle
+        //    plus a returned error.
+        self.recorder.start().await?;
+
+        // 3. Transition the session. If we lose the race against another
+        //    caller we have to roll back the recorder we just started.
+        {
+            let mut session = self.session.lock().await;
+            if let Err(e) = session.start_recording() {
+                drop(session);
+                let _ = self.recorder.cancel().await;
+                return Err(e.into());
+            }
+        }
+
+        // 4. Notify (best-effort, never fatal).
         if self.config.enable_notify {
             let _ = self
                 .notifier
@@ -149,25 +193,38 @@ where
                 .await;
         }
 
-        // Start the actual recording
-        self.recorder.start().await?;
-
         Ok(())
     }
 
-    /// Stop recording and return the audio data
-    /// Call `transcribe_audio` afterwards to complete the transcription
+    /// Stop recording and return the audio data.
+    ///
+    /// Call [`transcribe_audio`](Self::transcribe_audio) afterwards to
+    /// complete the transcription. We stop the recorder *before* the state
+    /// transition: if the recorder fails the session stays Recording (so
+    /// the user can retry / cancel) rather than getting stuck in
+    /// Processing with no audio buffer.
     pub async fn stop_recording(
         &self,
     ) -> Result<crate::domain::transcription::AudioData, DaemonError> {
-        // Transition to processing state
+        // Verify pre-state without holding the lock across the stop call.
+        {
+            let session = self.session.lock().await;
+            if !session.is_recording() {
+                return Err(InvalidStateTransition {
+                    current_state: session.state(),
+                    action: "stop recording".to_string(),
+                }
+                .into());
+            }
+        }
+
+        let audio = self.recorder.stop().await?;
+
         {
             let mut session = self.session.lock().await;
             session.stop_recording()?;
         }
 
-        // Stop recording and get audio
-        let audio = self.recorder.stop().await?;
         Ok(audio)
     }
 
@@ -176,7 +233,7 @@ where
         &self,
         audio: crate::domain::transcription::AudioData,
     ) -> Result<DaemonOutput, DaemonError> {
-        let audio_size = audio.human_readable_size();
+        let audio_size_bytes = audio.size_bytes() as u64;
 
         // Notify transcription start
         if self.config.enable_notify {
@@ -190,45 +247,31 @@ where
                 .await;
         }
 
-        // Transcribe
-        let text = self.transcriber.transcribe(&audio).await?;
-
-        // Perform output actions
-        let clipboard_copied = if self.config.enable_clipboard {
-            match self.clipboard.copy(&text).await {
-                Ok(()) => true,
-                Err(ClipboardError::WlCopyNotFound) => false,
-                Err(_) => false,
+        // Transcribe. If this fails we roll back the session to Idle so
+        // the daemon doesn't get stuck in Processing forever.
+        let text = match self.transcriber.transcribe(&audio).await {
+            Ok(t) => t,
+            Err(e) => {
+                let mut session = self.session.lock().await;
+                let _ = session.fail_processing();
+                return Err(e.into());
             }
-        } else {
-            false
         };
 
-        let keystroke_sent = if self.config.enable_keystroke {
-            match self.keystroke.type_text(&text).await {
-                Ok(()) => true,
-                Err(KeystrokeError::NoToolAvailable)
-                | Err(KeystrokeError::YdotoolNotAvailable)
-                | Err(KeystrokeError::WtypeNotFound)
-                | Err(KeystrokeError::XdotoolNotFound) => false,
-                Err(_) => false,
-            }
-        } else {
-            false
+        let opts = OutputOptions {
+            clipboard: self.config.enable_clipboard,
+            keystroke: self.config.enable_keystroke,
+            paste: self.config.enable_paste,
         };
-
-        // Smart paste: paste into captured window via clipboard
-        let paste_sent = if self.config.enable_paste {
-            match self.smart_paste.paste(&text).await {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("Warning: smart paste failed: {}", e);
-                    false
-                }
-            }
-        } else {
-            false
-        };
+        let result = dispatch_output(
+            &self.clipboard,
+            &self.keystroke,
+            &self.smart_paste,
+            &text,
+            opts,
+            self.config.warning_sink.as_ref(),
+        )
+        .await;
 
         // Complete processing
         {
@@ -250,10 +293,10 @@ where
 
         Ok(DaemonOutput {
             text,
-            clipboard_copied,
-            keystroke_sent,
-            paste_sent,
-            audio_size,
+            clipboard_copied: result.clipboard_copied,
+            keystroke_sent: result.keystroke_sent,
+            paste_sent: result.paste_sent,
+            audio_size_bytes,
         })
     }
 
@@ -308,7 +351,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{NotificationError, SmartPasteError};
+    use crate::application::ports::{
+        ClipboardError, KeystrokeError, NotificationError, SmartPasteError,
+    };
     use crate::domain::transcription::AudioData;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -410,12 +455,14 @@ mod tests {
     #[tokio::test]
     async fn start_recording_from_idle() {
         let use_case = DaemonTranscriptionUseCase::new(
-            MockUnboundedRecorder::new(),
-            MockTranscriber,
-            MockClipboard,
-            MockKeystroke,
-            MockNotifier,
-            MockSmartPaste,
+            UseCaseDeps {
+                recorder: MockUnboundedRecorder::new(),
+                transcriber: MockTranscriber,
+                clipboard: MockClipboard,
+                keystroke: MockKeystroke,
+                notifier: MockNotifier,
+                smart_paste: MockSmartPaste,
+            },
             DaemonConfig::default(),
         );
 
@@ -427,12 +474,14 @@ mod tests {
     #[tokio::test]
     async fn full_cycle() {
         let use_case = DaemonTranscriptionUseCase::new(
-            MockUnboundedRecorder::new(),
-            MockTranscriber,
-            MockClipboard,
-            MockKeystroke,
-            MockNotifier,
-            MockSmartPaste,
+            UseCaseDeps {
+                recorder: MockUnboundedRecorder::new(),
+                transcriber: MockTranscriber,
+                clipboard: MockClipboard,
+                keystroke: MockKeystroke,
+                notifier: MockNotifier,
+                smart_paste: MockSmartPaste,
+            },
             DaemonConfig::default(),
         );
 
@@ -449,12 +498,14 @@ mod tests {
     #[tokio::test]
     async fn cancel_recording() {
         let use_case = DaemonTranscriptionUseCase::new(
-            MockUnboundedRecorder::new(),
-            MockTranscriber,
-            MockClipboard,
-            MockKeystroke,
-            MockNotifier,
-            MockSmartPaste,
+            UseCaseDeps {
+                recorder: MockUnboundedRecorder::new(),
+                transcriber: MockTranscriber,
+                clipboard: MockClipboard,
+                keystroke: MockKeystroke,
+                notifier: MockNotifier,
+                smart_paste: MockSmartPaste,
+            },
             DaemonConfig::default(),
         );
 
@@ -466,17 +517,101 @@ mod tests {
     #[tokio::test]
     async fn start_recording_from_recording_fails() {
         let use_case = DaemonTranscriptionUseCase::new(
-            MockUnboundedRecorder::new(),
-            MockTranscriber,
-            MockClipboard,
-            MockKeystroke,
-            MockNotifier,
-            MockSmartPaste,
+            UseCaseDeps {
+                recorder: MockUnboundedRecorder::new(),
+                transcriber: MockTranscriber,
+                clipboard: MockClipboard,
+                keystroke: MockKeystroke,
+                notifier: MockNotifier,
+                smart_paste: MockSmartPaste,
+            },
             DaemonConfig::default(),
         );
 
         use_case.start_recording().await.unwrap();
         let result = use_case.start_recording().await;
         assert!(result.is_err());
+    }
+
+    /// A recorder whose `start` always fails. Used to confirm that the
+    /// session stays Idle when the recorder rejects start.
+    struct FailingRecorder;
+
+    #[async_trait]
+    impl UnboundedRecorder for FailingRecorder {
+        async fn start(&self) -> Result<(), RecordingError> {
+            Err(RecordingError::StartFailed("simulated failure".to_string()))
+        }
+        async fn stop(&self) -> Result<AudioData, RecordingError> {
+            Err(RecordingError::RecordingFailed("not recording".to_string()))
+        }
+        async fn cancel(&self) -> Result<(), RecordingError> {
+            Ok(())
+        }
+        fn is_recording(&self) -> bool {
+            false
+        }
+        fn elapsed_ms(&self) -> u64 {
+            0
+        }
+    }
+
+    /// A transcriber whose `transcribe` always fails. Used to confirm the
+    /// processing state rolls back to Idle on transcription error.
+    struct FailingTranscriber;
+
+    #[async_trait]
+    impl Transcriber for FailingTranscriber {
+        async fn transcribe(&self, _audio: &AudioData) -> Result<String, TranscriptionError> {
+            Err(TranscriptionError::ApiError("simulated".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn start_recording_failure_leaves_session_idle() {
+        let use_case = DaemonTranscriptionUseCase::new(
+            UseCaseDeps {
+                recorder: FailingRecorder,
+                transcriber: MockTranscriber,
+                clipboard: MockClipboard,
+                keystroke: MockKeystroke,
+                notifier: MockNotifier,
+                smart_paste: MockSmartPaste,
+            },
+            DaemonConfig::default(),
+        );
+
+        assert_eq!(use_case.state().await, DaemonState::Idle);
+        let result = use_case.start_recording().await;
+        assert!(result.is_err(), "expected start to fail");
+        assert_eq!(
+            use_case.state().await,
+            DaemonState::Idle,
+            "session must not transition when recorder fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn transcription_failure_rolls_session_back_to_idle() {
+        let use_case = DaemonTranscriptionUseCase::new(
+            UseCaseDeps {
+                recorder: MockUnboundedRecorder::new(),
+                transcriber: FailingTranscriber,
+                clipboard: MockClipboard,
+                keystroke: MockKeystroke,
+                notifier: MockNotifier,
+                smart_paste: MockSmartPaste,
+            },
+            DaemonConfig::default(),
+        );
+
+        use_case.start_recording().await.unwrap();
+        let result = use_case.stop_and_transcribe().await;
+        assert!(result.is_err(), "expected transcribe to fail");
+        assert_eq!(
+            use_case.state().await,
+            DaemonState::Idle,
+            "session must roll back to Idle on transcription failure"
+        );
     }
 }

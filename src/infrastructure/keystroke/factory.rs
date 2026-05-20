@@ -3,17 +3,11 @@
 use std::fmt;
 use std::str::FromStr;
 
-#[cfg(target_os = "linux")]
-use std::env;
-#[cfg(target_os = "linux")]
-use std::path::Path;
-#[cfg(target_os = "linux")]
-use std::process::Stdio;
-
-#[cfg(target_os = "linux")]
-use tokio::process::Command;
-
 use crate::application::ports::{Keystroke, KeystrokeError};
+#[cfg(target_os = "linux")]
+use crate::infrastructure::util::tool_detect::{
+    is_command_available as is_tool_available, is_ydotool_socket_available,
+};
 
 use super::enigo::EnigoKeystroke;
 #[cfg(target_os = "linux")]
@@ -130,54 +124,10 @@ impl fmt::Display for KeystrokeTool {
     }
 }
 
-/// Check if ydotool is available (binary exists AND daemon socket exists)
+/// Check if ydotool is available (binary on PATH + daemon socket present).
 #[cfg(target_os = "linux")]
 async fn is_ydotool_available() -> bool {
-    // Check if ydotool binary exists
-    let binary_exists = Command::new("which")
-        .arg("ydotool")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !binary_exists {
-        return false;
-    }
-
-    // Check if ydotoold socket exists
-    // Try XDG_RUNTIME_DIR first, then /tmp
-    let socket_paths = [
-        env::var("XDG_RUNTIME_DIR")
-            .map(|dir| format!("{}/.ydotool_socket", dir))
-            .ok(),
-        Some("/tmp/.ydotool_socket".to_string()),
-    ];
-
-    for path in socket_paths.into_iter().flatten() {
-        if Path::new(&path).exists() {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Check if a tool binary is available using `which`
-#[cfg(target_os = "linux")]
-async fn is_tool_available(tool: &str) -> bool {
-    Command::new("which")
-        .arg(tool)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false)
+    is_tool_available("ydotool").await && is_ydotool_socket_available()
 }
 
 /// Detect the best available keystroke tool
@@ -243,7 +193,7 @@ pub async fn create_keystroke(
                 // Auto-detect best available tool
                 match detect_keystroke_tool().await {
                     Some(tool) => create_specific_tool(tool),
-                    None => Err(KeystrokeError::NoToolAvailable),
+                    None => Err(KeystrokeError::NoBackendAvailable),
                 }
             }
             KeystrokeToolPreference::Ydotool => {
@@ -253,7 +203,10 @@ pub async fn create_keystroke(
                         KeystrokeTool::Ydotool,
                     ))
                 } else {
-                    Err(KeystrokeError::ToolNotFound("ydotool".to_string()))
+                    Err(KeystrokeError::BackendUnavailable {
+                        tool: "ydotool".to_string(),
+                        reason: "command not found or ydotoold socket missing".to_string(),
+                    })
                 }
             }
             KeystrokeToolPreference::Xdotool => {
@@ -263,7 +216,10 @@ pub async fn create_keystroke(
                         KeystrokeTool::Xdotool,
                     ))
                 } else {
-                    Err(KeystrokeError::ToolNotFound("xdotool".to_string()))
+                    Err(KeystrokeError::BackendUnavailable {
+                        tool: "xdotool".to_string(),
+                        reason: "command not found on PATH".to_string(),
+                    })
                 }
             }
             KeystrokeToolPreference::Wtype => {
@@ -273,7 +229,10 @@ pub async fn create_keystroke(
                         KeystrokeTool::Wtype,
                     ))
                 } else {
-                    Err(KeystrokeError::ToolNotFound("wtype".to_string()))
+                    Err(KeystrokeError::BackendUnavailable {
+                        tool: "wtype".to_string(),
+                        reason: "command not found on PATH".to_string(),
+                    })
                 }
             }
         }

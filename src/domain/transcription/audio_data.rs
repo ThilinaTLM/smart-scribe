@@ -103,24 +103,6 @@ impl AudioData {
     pub fn size_bytes(&self) -> usize {
         self.data.len()
     }
-
-    /// Get human-readable size
-    pub fn human_readable_size(&self) -> String {
-        let bytes = self.size_bytes();
-        if bytes < 1024 {
-            format!("{} B", bytes)
-        } else if bytes < 1024 * 1024 {
-            format!("{:.1} KB", bytes as f64 / 1024.0)
-        } else {
-            format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-        }
-    }
-
-    /// Encode the audio data as base64
-    pub fn to_base64(&self) -> String {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD.encode(&self.data)
-    }
 }
 
 #[cfg(test)]
@@ -145,37 +127,6 @@ mod tests {
     fn audio_data_size() {
         let data = AudioData::new(vec![0u8; 1024], AudioMimeType::Flac);
         assert_eq!(data.size_bytes(), 1024);
-    }
-
-    #[test]
-    fn human_readable_size_bytes() {
-        let data = AudioData::new(vec![0u8; 500], AudioMimeType::Flac);
-        assert_eq!(data.human_readable_size(), "500 B");
-    }
-
-    #[test]
-    fn human_readable_size_kb() {
-        let data = AudioData::new(vec![0u8; 2048], AudioMimeType::Flac);
-        assert_eq!(data.human_readable_size(), "2.0 KB");
-    }
-
-    #[test]
-    fn human_readable_size_mb() {
-        let data = AudioData::new(vec![0u8; 2 * 1024 * 1024], AudioMimeType::Flac);
-        assert_eq!(data.human_readable_size(), "2.0 MB");
-    }
-
-    #[test]
-    fn to_base64() {
-        let data = AudioData::new(vec![1, 2, 3, 4], AudioMimeType::Flac);
-        let b64 = data.to_base64();
-        assert!(!b64.is_empty());
-        // Verify it's valid base64 by decoding
-        use base64::Engine;
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .unwrap();
-        assert_eq!(decoded, vec![1, 2, 3, 4]);
     }
 
     #[test]

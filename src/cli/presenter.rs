@@ -174,6 +174,20 @@ impl Presenter {
     pub fn key_value(&self, key: &str, value: &str) {
         println!("{}: {}", key.cyan(), value);
     }
+
+    /// Return a [`WarningSink`](crate::application::WarningSink) closure that
+    /// emits messages through this presenter's standard warning channel.
+    ///
+    /// Used to feed application-layer warnings back into the CLI without
+    /// requiring the application layer to know how to format them.
+    pub fn warning_sink(&self) -> crate::application::WarningSink {
+        // The closure only needs to write "⚠ msg" to stderr; it does not
+        // share any Presenter state, so we don't need the Presenter to be
+        // Clone (or Sync).
+        std::sync::Arc::new(|msg: &str| {
+            eprintln!("{} {}", "⚠".yellow(), msg);
+        })
+    }
 }
 
 impl Default for Presenter {

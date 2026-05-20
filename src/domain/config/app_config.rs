@@ -1,11 +1,25 @@
-//! Application configuration value object
+//! Validated application configuration (runtime value object).
+//!
+//! Concrete, validated values; **no Options for things that have defaults**.
+//! Constructed from the on-disk [`RawAppConfig`](super::RawAppConfig) via
+//! `TryFrom`, which is the single place where parsing/validation lives.
 
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
-
+use crate::domain::error::ConfigError;
 use crate::domain::recording::Duration;
+
+use super::platform::PlatformConfig;
+use super::raw::RawAppConfig;
+
+/// Default transcription model.
+///
+/// `gpt-4o-transcribe` is OpenAI's highest-accuracy speech-to-text model
+/// (lower word error rate than `whisper-1` and `gpt-4o-mini-transcribe`).
+/// Both auth paths accept it; OAuth users pay nothing extra, API-key users
+/// pay the same per-minute rate as `whisper-1`.
+pub const DEFAULT_OPENAI_TRANSCRIBE_MODEL: &str = "gpt-4o-transcribe";
 
 /// Auth mode selecting which transcription backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,168 +60,52 @@ impl FromStr for AuthMode {
     }
 }
 
-/// Default transcription model.
+/// Validated, runtime application configuration.
 ///
-/// `gpt-4o-transcribe` is OpenAI's highest-accuracy speech-to-text model
-/// (lower word error rate than `whisper-1` and `gpt-4o-mini-transcribe`).
-/// Both auth paths accept it; OAuth users pay nothing extra, API-key users
-/// pay the same per-minute rate as `whisper-1`.
-pub const DEFAULT_OPENAI_TRANSCRIBE_MODEL: &str = "gpt-4o-transcribe";
-
-/// Linux-specific configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LinuxConfig {
-    pub keystroke_tool: Option<String>,
-    pub indicator: Option<bool>,
-    pub indicator_position: Option<String>,
-    pub paste: Option<bool>,
-}
-
-/// Windows-specific configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WindowsConfig {
-    /// Show system tray icon while the daemon is recording/processing.
-    pub indicator: Option<bool>,
-    /// Show Windows balloon notifications on state transitions.
-    pub show_balloon: Option<bool>,
-}
-
-/// Application configuration.
-/// All fields are optional to support partial configs and merging.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Constructed via [`AppConfig::try_from`] from a [`RawAppConfig`]. All
+/// fields are concrete (no Options for items that have static defaults);
+/// only fields the user can leave unset (api key, prompt, language hint,
+/// custom durations) stay Option-typed.
+#[derive(Debug, Clone)]
 pub struct AppConfig {
-    /// Auth mode: "oauth" (default) or "api_key".
-    pub auth: Option<String>,
-    /// OpenAI API key, used when `auth = "api_key"`.
+    pub auth: AuthMode,
     pub openai_api_key: Option<String>,
-    /// Transcription model. Applies to both auth modes; the OAuth
-    /// `/backend-api/transcribe` endpoint accepts the same `model` field as
-    /// the public API.
-    pub openai_transcribe_model: Option<String>,
-    /// Optional prompt sent as the `prompt` form field. Per OpenAI's docs
-    /// this is the most effective lever for fixing proper nouns and
-    /// jargon. Keep it short; ~224 tokens max on whisper-1.
+    pub openai_transcribe_model: String,
     pub transcribe_prompt: Option<String>,
-    /// Optional ISO 639-1 language hint (`en`, `es`, ...) sent as the
-    /// `language` form field. Improves accuracy and reduces hallucination,
-    /// especially on short audio. Leave unset for auto-detect.
     pub transcribe_language: Option<String>,
-    pub duration: Option<String>,
-    pub max_duration: Option<String>,
-    pub clipboard: Option<bool>,
-    pub keystroke: Option<bool>,
-    pub notify: Option<bool>,
-    pub audio_cue: Option<bool>,
-    pub linux: Option<LinuxConfig>,
-    pub windows: Option<WindowsConfig>,
+    /// User-supplied one-shot recording duration, if any.
+    pub duration: Option<Duration>,
+    /// User-supplied maximum duration / daemon safety limit, if any.
+    pub max_duration: Option<Duration>,
+    pub clipboard: bool,
+    pub keystroke: bool,
+    pub notify: bool,
+    pub audio_cue: bool,
+    pub platform: PlatformConfig,
 }
 
-impl AppConfig {
-    /// Create config with default values
-    pub fn defaults() -> Self {
+impl Default for AppConfig {
+    fn default() -> Self {
         Self {
-            auth: Some(AuthMode::default().to_string()),
+            auth: AuthMode::default(),
             openai_api_key: None,
-            openai_transcribe_model: Some(DEFAULT_OPENAI_TRANSCRIBE_MODEL.to_string()),
+            openai_transcribe_model: DEFAULT_OPENAI_TRANSCRIBE_MODEL.to_string(),
             transcribe_prompt: None,
             transcribe_language: None,
             duration: None,
             max_duration: None,
-            clipboard: Some(false),
-            keystroke: Some(false),
-            notify: Some(false),
-            audio_cue: Some(false),
-            linux: Some(LinuxConfig {
-                keystroke_tool: Some("enigo".to_string()),
-                indicator: Some(false),
-                indicator_position: Some("top-right".to_string()),
-                paste: Some(false),
-            }),
-            windows: Some(WindowsConfig {
-                indicator: Some(false),
-                show_balloon: Some(false),
-            }),
+            clipboard: false,
+            keystroke: false,
+            notify: false,
+            audio_cue: false,
+            platform: PlatformConfig::defaults(),
         }
     }
+}
 
-    /// Create an empty config (all None)
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    /// Merge this config with another, where other takes precedence.
-    /// Only non-None values from other will override this.
-    pub fn merge(self, other: Self) -> Self {
-        Self {
-            auth: other.auth.or(self.auth),
-            openai_api_key: other.openai_api_key.or(self.openai_api_key),
-            openai_transcribe_model: other
-                .openai_transcribe_model
-                .or(self.openai_transcribe_model),
-            transcribe_prompt: other.transcribe_prompt.or(self.transcribe_prompt),
-            transcribe_language: other.transcribe_language.or(self.transcribe_language),
-            duration: other.duration.or(self.duration),
-            max_duration: other.max_duration.or(self.max_duration),
-            clipboard: other.clipboard.or(self.clipboard),
-            keystroke: other.keystroke.or(self.keystroke),
-            notify: other.notify.or(self.notify),
-            audio_cue: other.audio_cue.or(self.audio_cue),
-            linux: Self::merge_linux_config(self.linux, other.linux),
-            windows: Self::merge_windows_config(self.windows, other.windows),
-        }
-    }
-
-    /// Merge Linux config sections
-    fn merge_linux_config(
-        base: Option<LinuxConfig>,
-        other: Option<LinuxConfig>,
-    ) -> Option<LinuxConfig> {
-        match (base, other) {
-            (None, None) => None,
-            (Some(b), None) => Some(b),
-            (None, Some(o)) => Some(o),
-            (Some(b), Some(o)) => Some(LinuxConfig {
-                keystroke_tool: o.keystroke_tool.or(b.keystroke_tool),
-                indicator: o.indicator.or(b.indicator),
-                indicator_position: o.indicator_position.or(b.indicator_position),
-                paste: o.paste.or(b.paste),
-            }),
-        }
-    }
-
-    /// Merge Windows config sections
-    fn merge_windows_config(
-        base: Option<WindowsConfig>,
-        other: Option<WindowsConfig>,
-    ) -> Option<WindowsConfig> {
-        match (base, other) {
-            (None, None) => None,
-            (Some(b), None) => Some(b),
-            (None, Some(o)) => Some(o),
-            (Some(b), Some(o)) => Some(WindowsConfig {
-                indicator: o.indicator.or(b.indicator),
-                show_balloon: o.show_balloon.or(b.show_balloon),
-            }),
-        }
-    }
-
-    /// Parse `auth` field. Falls back to [`AuthMode::default`] on missing or
-    /// invalid values.
-    pub fn auth_or_default(&self) -> AuthMode {
-        self.auth
-            .as_deref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_default()
-    }
-
-    /// Get the configured OpenAI transcription model, or the default if unset.
-    pub fn openai_transcribe_model_or_default(&self) -> &str {
-        self.openai_transcribe_model
-            .as_deref()
-            .unwrap_or(DEFAULT_OPENAI_TRANSCRIBE_MODEL)
-    }
-
-    /// Get the optional transcribe prompt, treating empty as None.
+impl AppConfig {
+    /// Return the optional transcribe prompt with empty/whitespace strings
+    /// treated as unset.
     pub fn transcribe_prompt_some(&self) -> Option<&str> {
         self.transcribe_prompt
             .as_deref()
@@ -215,98 +113,85 @@ impl AppConfig {
             .filter(|s| !s.is_empty())
     }
 
-    /// Get the optional language hint, lower-cased and trimmed.
+    /// Return the optional language hint with empty/whitespace strings
+    /// treated as unset.
     pub fn transcribe_language_some(&self) -> Option<&str> {
         self.transcribe_language
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
     }
+}
 
-    /// Get duration as parsed Duration, or default if not set/invalid
-    pub fn duration_or_default(&self) -> Duration {
-        self.duration
-            .as_ref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(Duration::default_duration)
+impl TryFrom<RawAppConfig> for AppConfig {
+    type Error = ConfigError;
+
+    fn try_from(raw: RawAppConfig) -> Result<Self, Self::Error> {
+        // --- auth --------------------------------------------------------
+        let auth = match raw.auth.as_deref() {
+            None | Some("") => AuthMode::default(),
+            Some(s) => s
+                .parse()
+                .map_err(|msg: String| ConfigError::ValidationError {
+                    key: "auth".to_string(),
+                    message: msg,
+                })?,
+        };
+
+        // --- durations ---------------------------------------------------
+        let duration = parse_duration(raw.duration.as_deref(), "duration")?;
+        let max_duration = parse_duration(raw.max_duration.as_deref(), "max_duration")?;
+
+        // --- model -------------------------------------------------------
+        let openai_transcribe_model = raw
+            .openai_transcribe_model
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_OPENAI_TRANSCRIBE_MODEL.to_string());
+
+        // --- platform sub-config (flat shape) ----------------------------
+        let defaults = PlatformConfig::defaults();
+        let linux = raw.linux.unwrap_or_default();
+        let windows = raw.windows.unwrap_or_default();
+        let platform = PlatformConfig {
+            keystroke_tool: linux.keystroke_tool.unwrap_or(defaults.keystroke_tool),
+            // `indicator` is read from whichever platform table is present;
+            // both platforms use the same flag so the merge is just `or`.
+            indicator: linux.indicator.or(windows.indicator).unwrap_or(false),
+            indicator_position: linux
+                .indicator_position
+                .unwrap_or(defaults.indicator_position),
+            linux_paste: linux.paste.unwrap_or(false),
+            windows_show_balloon: windows.show_balloon.unwrap_or(false),
+        };
+
+        Ok(Self {
+            auth,
+            openai_api_key: raw.openai_api_key.filter(|s| !s.is_empty()),
+            openai_transcribe_model,
+            transcribe_prompt: raw.transcribe_prompt,
+            transcribe_language: raw.transcribe_language,
+            duration,
+            max_duration,
+            clipboard: raw.clipboard.unwrap_or(false),
+            keystroke: raw.keystroke.unwrap_or(false),
+            notify: raw.notify.unwrap_or(false),
+            audio_cue: raw.audio_cue.unwrap_or(false),
+            platform,
+        })
     }
+}
 
-    /// Get max_duration as parsed Duration, or default if not set/invalid
-    pub fn max_duration_or_default(&self) -> Duration {
-        self.max_duration
-            .as_ref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(Duration::default_max_duration)
-    }
-
-    /// Get clipboard setting, or false if not set
-    pub fn clipboard_or_default(&self) -> bool {
-        self.clipboard.unwrap_or(false)
-    }
-
-    /// Get keystroke setting, or false if not set
-    pub fn keystroke_or_default(&self) -> bool {
-        self.keystroke.unwrap_or(false)
-    }
-
-    /// Get notify setting, or false if not set
-    pub fn notify_or_default(&self) -> bool {
-        self.notify.unwrap_or(false)
-    }
-
-    /// Get audio_cue setting, or false if not set
-    pub fn audio_cue_or_default(&self) -> bool {
-        self.audio_cue.unwrap_or(false)
-    }
-
-    /// Get indicator setting, or false if not set (Linux only)
-    #[cfg(target_os = "linux")]
-    pub fn indicator_or_default(&self) -> bool {
-        self.linux
-            .as_ref()
-            .and_then(|l| l.indicator)
-            .unwrap_or(false)
-    }
-
-    /// Get indicator position setting, or "top-right" if not set (Linux only)
-    #[cfg(target_os = "linux")]
-    pub fn indicator_position_or_default(&self) -> &str {
-        self.linux
-            .as_ref()
-            .and_then(|l| l.indicator_position.as_deref())
-            .unwrap_or("top-right")
-    }
-
-    /// Get paste setting, or false if not set (Linux only)
-    #[cfg(target_os = "linux")]
-    pub fn paste_or_default(&self) -> bool {
-        self.linux.as_ref().and_then(|l| l.paste).unwrap_or(false)
-    }
-
-    /// Get keystroke tool preference, or "enigo" if not set
-    pub fn keystroke_tool_or_default(&self) -> &str {
-        self.linux
-            .as_ref()
-            .and_then(|l| l.keystroke_tool.as_deref())
-            .unwrap_or("enigo")
-    }
-
-    /// Get indicator setting, or false if not set (Windows only)
-    #[cfg(target_os = "windows")]
-    pub fn indicator_or_default(&self) -> bool {
-        self.windows
-            .as_ref()
-            .and_then(|w| w.indicator)
-            .unwrap_or(false)
-    }
-
-    /// Get balloon-notification setting, or false if not set (Windows only)
-    #[cfg(target_os = "windows")]
-    pub fn show_balloon_or_default(&self) -> bool {
-        self.windows
-            .as_ref()
-            .and_then(|w| w.show_balloon)
-            .unwrap_or(false)
+fn parse_duration(input: Option<&str>, key: &str) -> Result<Option<Duration>, ConfigError> {
+    match input {
+        None => Ok(None),
+        Some(s) if s.trim().is_empty() => Ok(None),
+        Some(s) => s
+            .parse::<Duration>()
+            .map(Some)
+            .map_err(|e| ConfigError::ValidationError {
+                key: key.to_string(),
+                message: e.to_string(),
+            }),
     }
 }
 
@@ -316,101 +201,84 @@ mod tests {
 
     #[test]
     fn defaults_have_expected_values() {
-        let config = AppConfig::defaults();
-        assert_eq!(config.auth.as_deref(), Some("oauth"));
+        let config = AppConfig::default();
+        assert_eq!(config.auth, AuthMode::Oauth);
         assert_eq!(
-            config.openai_transcribe_model.as_deref(),
-            Some(DEFAULT_OPENAI_TRANSCRIBE_MODEL)
+            config.openai_transcribe_model,
+            DEFAULT_OPENAI_TRANSCRIBE_MODEL
         );
         assert!(config.openai_api_key.is_none());
-        assert!(config.duration.is_none());
-        assert!(config.max_duration.is_none());
-        assert_eq!(config.clipboard, Some(false));
-        assert_eq!(config.keystroke, Some(false));
-        assert_eq!(config.notify, Some(false));
-        assert_eq!(config.audio_cue, Some(false));
-        assert_eq!(config.keystroke_tool_or_default(), "enigo");
-        // Linux-specific defaults
-        let linux = config.linux.as_ref().unwrap();
-        assert_eq!(linux.indicator, Some(false));
-        assert_eq!(linux.indicator_position, Some("top-right".to_string()));
-        // Windows-specific defaults
-        let windows = config.windows.as_ref().unwrap();
-        assert_eq!(windows.indicator, Some(false));
-        assert_eq!(windows.show_balloon, Some(false));
+        assert!(!config.clipboard);
+        assert_eq!(config.platform.keystroke_tool, "enigo");
     }
 
     #[test]
-    fn empty_has_all_none() {
-        let config = AppConfig::empty();
-        assert!(config.auth.is_none());
+    fn from_raw_defaults() {
+        let config = AppConfig::try_from(RawAppConfig::defaults()).unwrap();
+        assert_eq!(config.auth, AuthMode::Oauth);
+        assert_eq!(
+            config.openai_transcribe_model,
+            DEFAULT_OPENAI_TRANSCRIBE_MODEL
+        );
+        assert!(!config.clipboard);
+        assert_eq!(config.platform.keystroke_tool, "enigo");
+        assert_eq!(config.platform.indicator_position, "top-right");
+    }
+
+    #[test]
+    fn from_raw_rejects_invalid_auth() {
+        let raw = RawAppConfig {
+            auth: Some("nonsense".into()),
+            ..Default::default()
+        };
+        let err = AppConfig::try_from(raw).unwrap_err();
+        match err {
+            ConfigError::ValidationError { key, .. } => assert_eq!(key, "auth"),
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_raw_rejects_invalid_duration() {
+        let raw = RawAppConfig {
+            duration: Some("garbage".into()),
+            ..Default::default()
+        };
+        let err = AppConfig::try_from(raw).unwrap_err();
+        match err {
+            ConfigError::ValidationError { key, .. } => assert_eq!(key, "duration"),
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_raw_parses_duration() {
+        let raw = RawAppConfig {
+            duration: Some("30s".into()),
+            ..Default::default()
+        };
+        let config = AppConfig::try_from(raw).unwrap();
+        assert_eq!(config.duration.unwrap().as_secs(), 30);
+    }
+
+    #[test]
+    fn from_raw_treats_empty_duration_as_unset() {
+        let raw = RawAppConfig {
+            duration: Some("".into()),
+            ..Default::default()
+        };
+        let config = AppConfig::try_from(raw).unwrap();
+        assert!(config.duration.is_none());
+    }
+
+    #[test]
+    fn from_raw_treats_empty_api_key_as_unset() {
+        let raw = RawAppConfig {
+            openai_api_key: Some("".into()),
+            ..Default::default()
+        };
+        let config = AppConfig::try_from(raw).unwrap();
         assert!(config.openai_api_key.is_none());
-        assert!(config.duration.is_none());
-        assert!(config.clipboard.is_none());
-        assert!(config.linux.is_none());
-        assert!(config.windows.is_none());
-    }
-
-    #[test]
-    fn merge_other_takes_precedence() {
-        let base = AppConfig {
-            openai_api_key: Some("base_key".to_string()),
-            duration: Some("10s".to_string()),
-            auth: Some("oauth".to_string()),
-            ..Default::default()
-        };
-
-        let other = AppConfig {
-            openai_api_key: Some("other_key".to_string()),
-            duration: None, // Should not override
-            auth: Some("api_key".to_string()),
-            ..Default::default()
-        };
-
-        let merged = base.merge(other);
-
-        assert_eq!(merged.openai_api_key, Some("other_key".to_string()));
-        assert_eq!(merged.duration, Some("10s".to_string())); // Kept from base
-        assert_eq!(merged.auth.as_deref(), Some("api_key"));
-    }
-
-    #[test]
-    fn merge_preserves_base_when_other_is_none() {
-        let base = AppConfig {
-            openai_api_key: Some("key".to_string()),
-            clipboard: Some(true),
-            ..Default::default()
-        };
-
-        let other = AppConfig::empty();
-        let merged = base.merge(other);
-
-        assert_eq!(merged.openai_api_key, Some("key".to_string()));
-        assert_eq!(merged.clipboard, Some(true));
-    }
-
-    #[test]
-    fn duration_or_default_parses() {
-        let config = AppConfig {
-            duration: Some("30s".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(config.duration_or_default().as_secs(), 30);
-    }
-
-    #[test]
-    fn duration_or_default_uses_default_on_invalid() {
-        let config = AppConfig {
-            duration: Some("invalid".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(config.duration_or_default().as_secs(), 10);
-    }
-
-    #[test]
-    fn duration_or_default_uses_default_on_none() {
-        let config = AppConfig::empty();
-        assert_eq!(config.duration_or_default().as_secs(), 10);
     }
 
     #[test]
@@ -420,172 +288,5 @@ mod tests {
         assert_eq!(AuthMode::from_str("api_key"), Ok(AuthMode::ApiKey));
         assert_eq!(AuthMode::from_str("API-Key"), Ok(AuthMode::ApiKey));
         assert!(AuthMode::from_str("nope").is_err());
-    }
-
-    #[test]
-    fn auth_or_default_falls_back_to_oauth() {
-        let config = AppConfig::empty();
-        assert_eq!(config.auth_or_default(), AuthMode::Oauth);
-        let bad = AppConfig {
-            auth: Some("nonsense".into()),
-            ..Default::default()
-        };
-        assert_eq!(bad.auth_or_default(), AuthMode::Oauth);
-    }
-
-    #[test]
-    fn boolean_defaults() {
-        let config = AppConfig::empty();
-        assert!(!config.clipboard_or_default());
-        assert!(!config.keystroke_or_default());
-        assert!(!config.notify_or_default());
-        assert!(!config.audio_cue_or_default());
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn indicator_or_default_returns_false() {
-        let config = AppConfig::empty();
-        assert!(!config.indicator_or_default());
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn indicator_position_or_default_returns_top_right() {
-        let config = AppConfig::empty();
-        assert_eq!(config.indicator_position_or_default(), "top-right");
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn indicator_position_or_default_returns_configured() {
-        let config = AppConfig {
-            linux: Some(LinuxConfig {
-                indicator_position: Some("bottom-left".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(config.indicator_position_or_default(), "bottom-left");
-    }
-
-    #[test]
-    fn keystroke_tool_or_default_returns_platform_default() {
-        let config = AppConfig::empty();
-        assert_eq!(config.keystroke_tool_or_default(), "enigo");
-    }
-
-    #[test]
-    fn keystroke_tool_or_default_returns_configured() {
-        let config = AppConfig {
-            linux: Some(LinuxConfig {
-                keystroke_tool: Some("xdotool".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(config.keystroke_tool_or_default(), "xdotool");
-    }
-
-    #[test]
-    fn merge_linux_config() {
-        let base = AppConfig {
-            linux: Some(LinuxConfig {
-                keystroke_tool: Some("enigo".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let other = AppConfig {
-            linux: Some(LinuxConfig {
-                keystroke_tool: Some("xdotool".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let merged = base.merge(other);
-        assert_eq!(merged.keystroke_tool_or_default(), "xdotool");
-    }
-
-    #[test]
-    fn merge_linux_config_preserves_base() {
-        let base = AppConfig {
-            linux: Some(LinuxConfig {
-                keystroke_tool: Some("ydotool".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let other = AppConfig::empty();
-        let merged = base.merge(other);
-        assert_eq!(merged.keystroke_tool_or_default(), "ydotool");
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn windows_indicator_or_default_returns_false() {
-        let config = AppConfig::empty();
-        assert!(!config.indicator_or_default());
-        assert!(!config.show_balloon_or_default());
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn windows_indicator_or_default_returns_configured() {
-        let config = AppConfig {
-            windows: Some(WindowsConfig {
-                indicator: Some(true),
-                show_balloon: Some(true),
-            }),
-            ..Default::default()
-        };
-        assert!(config.indicator_or_default());
-        assert!(config.show_balloon_or_default());
-    }
-
-    #[test]
-    fn merge_windows_config_indicator_field() {
-        let base = AppConfig {
-            windows: Some(WindowsConfig {
-                indicator: Some(false),
-                show_balloon: Some(false),
-            }),
-            ..Default::default()
-        };
-        let other = AppConfig {
-            windows: Some(WindowsConfig {
-                indicator: Some(true),
-                show_balloon: None,
-            }),
-            ..Default::default()
-        };
-        let merged = base.merge(other);
-        let w = merged.windows.as_ref().unwrap();
-        assert_eq!(w.indicator, Some(true));
-        assert_eq!(w.show_balloon, Some(false));
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn merge_linux_config_indicator_fields() {
-        let base = AppConfig {
-            linux: Some(LinuxConfig {
-                indicator: Some(false),
-                indicator_position: Some("top-right".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let other = AppConfig {
-            linux: Some(LinuxConfig {
-                indicator: Some(true),
-                indicator_position: Some("bottom-left".to_string()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let merged = base.merge(other);
-        assert!(merged.indicator_or_default());
-        assert_eq!(merged.indicator_position_or_default(), "bottom-left");
     }
 }

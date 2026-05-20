@@ -5,168 +5,59 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
-use async_trait::async_trait;
 use tokio::time::timeout;
 
-use crate::application::ports::{
-    AudioCue, AudioCueType, ConfigStore, Transcriber, TranscriptionError,
-};
+use crate::application::ports::{AudioCue, AudioCueType, ConfigStore};
 use crate::application::{TranscribeCallbacks, TranscribeInput, TranscribeRecordingUseCase};
-use crate::domain::config::{AppConfig, AuthMode};
+use crate::domain::config::{AppConfig, RawAppConfig};
+use crate::domain::error::ConfigError;
 use crate::domain::recording::Duration;
-use crate::domain::transcription::AudioData;
-use crate::infrastructure::{
-    create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
-    create_smart_paste, ChatGptOAuthTranscriber, KeystrokeToolPreference, NoOpKeystroke,
-    NoOpSmartPaste, OAuthStore, OpenAiApiTranscriber, XdgConfigStore,
-};
+use crate::infrastructure::XdgConfigStore;
+
+// Re-export the transcriber factory at this path for backwards compatibility
+// with `super::app::create_transcriber` callers (still used by daemon_app).
+pub use crate::infrastructure::create_transcriber;
 
 use super::args::TranscribeOptions;
 use super::auth_cmd::describe_auth;
+use super::exit_codes;
 use super::output::OneshotResponse;
 use super::presenter::Presenter;
+use super::runtime::{build_adapters, BuildError, RuntimeOptions};
 use super::signals::DaemonSignalHandler;
 
 /// Poll interval for foreground recording updates.
 const FOREGROUND_POLL_MS: u64 = 200;
 
-/// Enum wrapper for dynamic backend dispatch.
-pub enum AnyTranscriber {
-    Oauth(ChatGptOAuthTranscriber),
-    ApiKey(OpenAiApiTranscriber),
-}
-
-#[async_trait]
-impl Transcriber for AnyTranscriber {
-    async fn transcribe(&self, audio: &AudioData) -> Result<String, TranscriptionError> {
-        match self {
-            AnyTranscriber::Oauth(t) => t.transcribe(audio).await,
-            AnyTranscriber::ApiKey(t) => t.transcribe(audio).await,
-        }
-    }
-}
-
-/// Create a transcriber based on the merged config.
-///
-/// For OAuth mode we construct the transcriber even if no token is yet on
-/// disk — the missing-token error is surfaced at the first transcribe call so
-/// that `smart-scribe login` can still be used to populate it.
-pub fn create_transcriber(config: &AppConfig) -> Result<AnyTranscriber, String> {
-    let model = config.openai_transcribe_model_or_default().to_string();
-    let prompt = config.transcribe_prompt_some().map(str::to_string);
-    let language = config.transcribe_language_some().map(str::to_string);
-    match config.auth_or_default() {
-        AuthMode::Oauth => {
-            let store = OAuthStore::new()
-                .map_err(|e| format!("Could not initialize OAuth token store: {e}"))?;
-            Ok(AnyTranscriber::Oauth(
-                ChatGptOAuthTranscriber::new(store, model)
-                    .with_prompt(prompt)
-                    .with_language(language),
-            ))
-        }
-        AuthMode::ApiKey => {
-            let api_key = config.openai_api_key.as_ref().ok_or_else(|| {
-                "Missing OpenAI API key. Set OPENAI_API_KEY or run \
-                 'smart-scribe config set openai_api_key <key>'."
-                    .to_string()
-            })?;
-            Ok(AnyTranscriber::ApiKey(
-                OpenAiApiTranscriber::new(api_key, model)
-                    .with_prompt(prompt)
-                    .with_language(language),
-            ))
-        }
-    }
-}
-
-/// Exit codes
-pub const EXIT_SUCCESS: u8 = 0;
-pub const EXIT_ERROR: u8 = 1;
-pub const EXIT_USAGE_ERROR: u8 = 2;
-
 /// Run the one-shot transcription
 pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> ExitCode {
     let mut presenter = Presenter::new(options.output);
 
-    // Create transcriber from merged config
-    let transcriber = match create_transcriber(config) {
-        Ok(t) => t,
-        Err(e) => {
-            presenter.error(&e);
-            return ExitCode::from(EXIT_ERROR);
+    let runtime_opts = RuntimeOptions::from(&options);
+    let bundle = match build_adapters(config, &runtime_opts, &presenter).await {
+        Ok(b) => b,
+        Err(BuildError::Transcriber(msg)) => {
+            presenter.error(&msg);
+            return ExitCode::from(exit_codes::ERROR);
+        }
+        Err(BuildError::SmartPaste(msg)) => {
+            presenter.error(&format!("Paste mode unavailable: {}", msg));
+            return ExitCode::from(exit_codes::ERROR);
         }
     };
-    eprintln!("{}", describe_auth(config));
+    presenter.info(&describe_auth(config));
 
-    // Create adapters (using cross-platform implementations)
-    let recorder = create_recorder();
-    let (clipboard, clipboard_tool) = create_clipboard().await;
-    if options.clipboard {
-        eprintln!("Clipboard: using {}", clipboard_tool);
-    }
-    let notifier = create_notifier();
+    let use_case = TranscribeRecordingUseCase::new(crate::application::UseCaseDeps {
+        recorder: bundle.recorder,
+        transcriber: bundle.transcriber,
+        clipboard: bundle.clipboard,
+        keystroke: bundle.keystroke,
+        notifier: bundle.notifier,
+        smart_paste: bundle.smart_paste,
+    });
+    let audio_cue: Arc<dyn AudioCue> = bundle.audio_cue;
 
-    // Parse keystroke tool preference
-    let preference = options
-        .keystroke_tool
-        .as_ref()
-        .and_then(|s| s.parse::<KeystrokeToolPreference>().ok())
-        .unwrap_or_default();
-
-    // Detect keystroke tool
-    let keystroke: Box<dyn crate::application::ports::Keystroke> =
-        match create_keystroke(preference).await {
-            Ok((ks, tool)) => {
-                eprintln!("Keystroke: using {}", tool);
-                ks
-            }
-            Err(e) => {
-                if options.keystroke {
-                    presenter.warn(&format!("Keystroke disabled: {}", e));
-                }
-                Box::new(NoOpKeystroke::new())
-            }
-        };
-
-    // Create smart paste adapter (Linux only)
-    #[cfg(target_os = "linux")]
-    let smart_paste: Box<dyn crate::application::ports::SmartPaste> = if options.paste {
-        match create_smart_paste().await {
-            Ok(sp) => {
-                eprintln!("Paste: using kdotool+wl-copy+ydotool");
-                sp
-            }
-            Err(e) => {
-                presenter.error(&format!("Paste mode unavailable: {}", e));
-                return ExitCode::from(EXIT_ERROR);
-            }
-        }
-    } else {
-        Box::new(NoOpSmartPaste::new())
-    };
-    #[cfg(not(target_os = "linux"))]
-    let smart_paste: Box<dyn crate::application::ports::SmartPaste> =
-        Box::new(NoOpSmartPaste::new());
-
-    // Create use case
-    let use_case = TranscribeRecordingUseCase::new(
-        recorder,
-        transcriber,
-        clipboard,
-        keystroke,
-        notifier,
-        smart_paste,
-    );
-
-    // Create audio cue adapter
-    let audio_cue: Arc<dyn AudioCue> = Arc::from(create_audio_cue(options.audio_cue));
-
-    // Create input
-    #[cfg(target_os = "linux")]
     let enable_paste = options.paste;
-    #[cfg(not(target_os = "linux"))]
-    let enable_paste = false;
 
     match options.duration {
         Some(duration) => {
@@ -176,6 +67,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                 enable_keystroke: options.keystroke,
                 enable_paste,
                 enable_notify: options.notify,
+                warning_sink: Some(presenter.warning_sink()),
             };
             let callbacks = fixed_callbacks(Arc::clone(&audio_cue));
 
@@ -183,7 +75,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                 Ok(output) => present_output(&presenter, output),
                 Err(e) => {
                     presenter.error(&e.to_string());
-                    ExitCode::from(EXIT_ERROR)
+                    ExitCode::from(exit_codes::ERROR)
                 }
             }
         }
@@ -196,6 +88,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                 enable_keystroke: options.keystroke,
                 enable_paste,
                 enable_notify: options.notify,
+                warning_sink: Some(presenter.warning_sink()),
             };
             let callbacks = TranscribeCallbacks {
                 on_progress: None,
@@ -209,13 +102,13 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                 Ok(s) => s,
                 Err(e) => {
                     presenter.error(&format!("Failed to setup signal handler: {}", e));
-                    return ExitCode::from(EXIT_ERROR);
+                    return ExitCode::from(exit_codes::ERROR);
                 }
             };
 
             if let Err(e) = use_case.start_recording(&input, &callbacks).await {
                 presenter.error(&e.to_string());
-                return ExitCode::from(EXIT_ERROR);
+                return ExitCode::from(exit_codes::ERROR);
             }
 
             let cue = Arc::clone(&audio_cue);
@@ -267,14 +160,14 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                         Err(e) => {
                             presenter.spinner_fail("Recording failed");
                             presenter.error(&e.to_string());
-                            return ExitCode::from(EXIT_ERROR);
+                            return ExitCode::from(exit_codes::ERROR);
                         }
                     }
                 }
                 signal = signals.recv() => {
                     if signal.is_some() {
                         presenter.spinner_fail("Recording aborted");
-                        return ExitCode::from(EXIT_ERROR);
+                        return ExitCode::from(exit_codes::ERROR);
                     }
 
                     match stop_future.await {
@@ -282,7 +175,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                         Err(e) => {
                             presenter.spinner_fail("Recording failed");
                             presenter.error(&e.to_string());
-                            return ExitCode::from(EXIT_ERROR);
+                            return ExitCode::from(exit_codes::ERROR);
                         }
                     }
                 }
@@ -290,7 +183,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
 
             presenter.spinner_success(&format!(
                 "Recording complete ({})",
-                audio.human_readable_size()
+                super::output::format_audio_size(audio.size_bytes() as u64)
             ));
 
             let cue = Arc::clone(&audio_cue);
@@ -310,14 +203,14 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                         Err(e) => {
                             presenter.spinner_fail("Transcription failed");
                             presenter.error(&e.to_string());
-                            return ExitCode::from(EXIT_ERROR);
+                            return ExitCode::from(exit_codes::ERROR);
                         }
                     }
                 }
                 signal = signals.recv() => {
                     if signal.is_some() {
                         presenter.spinner_fail("Transcription aborted");
-                        return ExitCode::from(EXIT_ERROR);
+                        return ExitCode::from(exit_codes::ERROR);
                     }
 
                     match transcribe_future.await {
@@ -325,7 +218,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
                         Err(e) => {
                             presenter.spinner_fail("Transcription failed");
                             presenter.error(&e.to_string());
-                            return ExitCode::from(EXIT_ERROR);
+                            return ExitCode::from(exit_codes::ERROR);
                         }
                     }
                 }
@@ -354,8 +247,11 @@ fn fixed_callbacks(audio_cue: Arc<dyn AudioCue>) -> TranscribeCallbacks {
         })),
         on_recording_end: Some(Box::new({
             let cue = Arc::clone(&audio_cue);
-            move |size: &str| {
-                eprintln!("✓ Recording complete ({})", size);
+            move |size_bytes: u64| {
+                eprintln!(
+                    "✓ Recording complete ({})",
+                    super::output::format_audio_size(size_bytes)
+                );
                 let cue = Arc::clone(&cue);
                 tokio::spawn(async move {
                     let _ = cue.play(AudioCueType::RecordingStop).await;
@@ -383,7 +279,7 @@ fn foreground_recording_message(elapsed_ms: u64, max_duration: Option<Duration>)
 fn present_output(presenter: &Presenter, output: crate::application::TranscribeOutput) -> ExitCode {
     if presenter.is_json() {
         presenter.output_json(&OneshotResponse::from(output));
-        return ExitCode::from(EXIT_SUCCESS);
+        return ExitCode::from(exit_codes::SUCCESS);
     }
 
     presenter.output(&output.text);
@@ -398,7 +294,7 @@ fn present_output(presenter: &Presenter, output: crate::application::TranscribeO
         presenter.info("Pasted into window");
     }
 
-    ExitCode::from(EXIT_SUCCESS)
+    ExitCode::from(exit_codes::SUCCESS)
 }
 
 /// Get the OpenAI API key from environment or config file (for `auth = api_key`).
@@ -410,29 +306,36 @@ pub async fn get_openai_api_key() -> Result<String, String> {
     }
 
     let store = XdgConfigStore::new();
-    let config = store.load().await.unwrap_or_else(|_| AppConfig::empty());
+    let config = store.load().await.unwrap_or_else(|_| RawAppConfig::empty());
 
-    config.openai_api_key.ok_or_else(|| {
-        "Missing OpenAI API key. Set OPENAI_API_KEY or run \
+    config
+        .openai_api_key
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            "Missing OpenAI API key. Set OPENAI_API_KEY or run \
          'smart-scribe config set openai_api_key <key>'."
-            .to_string()
-    })
+                .to_string()
+        })
 }
 
-/// Load and merge configuration from file, env, and CLI
-pub async fn load_merged_config(cli_config: AppConfig) -> AppConfig {
+/// Load and merge configuration from file, env, and CLI inputs.
+///
+/// Returns the validated [`AppConfig`]; surfaces validation errors
+/// (`auth=garbage`, malformed durations, ...) as [`ConfigError::
+/// ValidationError`].
+pub async fn load_merged_config(cli_config: RawAppConfig) -> Result<AppConfig, ConfigError> {
     let store = XdgConfigStore::new();
-    let file_config = store.load().await.unwrap_or_else(|_| AppConfig::empty());
+    let file_config = store.load().await.unwrap_or_else(|_| RawAppConfig::empty());
 
-    // Build env config
-    let env_config = AppConfig {
+    let env_config = RawAppConfig {
         openai_api_key: env::var("OPENAI_API_KEY").ok().filter(|s| !s.is_empty()),
         ..Default::default()
     };
 
-    // Merge: defaults < file < env < cli
-    AppConfig::defaults()
+    let merged = RawAppConfig::defaults()
         .merge(file_config)
         .merge(env_config)
-        .merge(cli_config)
+        .merge(cli_config);
+
+    AppConfig::try_from(merged)
 }

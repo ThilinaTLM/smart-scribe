@@ -6,27 +6,26 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-/// Smart paste errors
+/// Smart paste errors.
+///
+/// Tool names appear only in the `tool` field of variants; the application
+/// layer matches on the variant, not on tool name strings.
 #[derive(Debug, Clone, Error)]
 pub enum SmartPasteError {
-    #[error("kdotool not found. Install kdotool for KDE Plasma window management.")]
-    KdotoolNotFound,
+    /// A required backend tool (kdotool, wl-copy, ydotool, …) is not
+    /// installed or not reachable.
+    #[error("Smart-paste backend `{tool}` is not available: {reason}")]
+    BackendUnavailable { tool: String, reason: String },
 
-    #[error("wl-copy not found. Install wl-clipboard.")]
-    WlCopyNotFound,
-
-    #[error("wl-paste not found. Install wl-clipboard.")]
-    WlPasteNotFound,
-
-    #[error("ydotool not available. Install ydotool and ensure ydotoold is running.")]
-    YdotoolNotAvailable,
-
+    /// No window was captured before recording started.
     #[error("No active window captured")]
     NoWindowCaptured,
 
+    /// Re-activating the captured window failed.
     #[error("Failed to activate window: {0}")]
     WindowActivationFailed(String),
 
+    /// The paste sequence itself failed.
     #[error("Paste failed: {0}")]
     PasteFailed(String),
 }

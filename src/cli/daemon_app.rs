@@ -11,18 +11,15 @@ use crate::application::ports::{AudioCue, AudioCueType};
 use crate::application::{DaemonConfig, DaemonTranscriptionUseCase};
 use crate::domain::config::AppConfig;
 use crate::domain::daemon::{DaemonState, StateUpdate};
-use crate::infrastructure::{
-    create_audio_cue, create_clipboard, create_keystroke, create_notifier, create_recorder,
-    create_smart_paste, KeystrokeToolPreference, NoOpKeystroke, NoOpSmartPaste,
-};
 
-use super::app::{create_transcriber, EXIT_ERROR, EXIT_SUCCESS};
 use super::args::DaemonOptions;
 use super::auth_cmd::describe_auth;
+use super::exit_codes;
 use super::ipc::create_ipc_server;
 use super::output::DaemonEvent;
 use super::pid_file::{PidFile, PidFileError};
 use super::presenter::Presenter;
+use super::runtime::{build_adapters, BuildError, RuntimeOptions};
 use super::signals::{DaemonSignal, DaemonSignalHandler};
 
 /// Buffer size for state update broadcast channel
@@ -54,92 +51,46 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
                 presenter.error(&e.to_string());
             }
         }
-        return ExitCode::from(EXIT_ERROR);
+        return ExitCode::from(exit_codes::ERROR);
     }
 
-    // Create transcriber from config
-    let transcriber = match create_transcriber(config) {
-        Ok(t) => t,
-        Err(e) => {
-            presenter.error(&e);
-            return ExitCode::from(EXIT_ERROR);
+    let runtime_opts = RuntimeOptions::from(&options);
+    let bundle = match build_adapters(config, &runtime_opts, &presenter).await {
+        Ok(b) => b,
+        Err(BuildError::Transcriber(msg)) => {
+            presenter.error(&msg);
+            return ExitCode::from(exit_codes::ERROR);
+        }
+        Err(BuildError::SmartPaste(msg)) => {
+            presenter.error(&format!("Paste mode unavailable: {}", msg));
+            return ExitCode::from(exit_codes::ERROR);
         }
     };
-    eprintln!("{}", describe_auth(config));
+    presenter.info(&describe_auth(config));
 
-    // Create adapters (using cross-platform implementations)
-    let recorder = create_recorder();
-    let (clipboard, clipboard_tool) = create_clipboard().await;
-    if options.clipboard {
-        eprintln!("Clipboard: using {}", clipboard_tool);
-    }
-    let notifier = create_notifier();
-
-    // Parse keystroke tool preference
-    let preference = options
-        .keystroke_tool
-        .as_ref()
-        .and_then(|s| s.parse::<KeystrokeToolPreference>().ok())
-        .unwrap_or_default();
-
-    // Detect keystroke tool
-    let keystroke: Box<dyn crate::application::ports::Keystroke> =
-        match create_keystroke(preference).await {
-            Ok((ks, tool)) => {
-                eprintln!("Keystroke: using {}", tool);
-                ks
-            }
-            Err(e) => {
-                if options.keystroke {
-                    presenter.warn(&format!("Keystroke disabled: {}", e));
-                }
-                Box::new(NoOpKeystroke::new())
-            }
-        };
-
-    // Create smart paste adapter (Linux only)
-    #[cfg(target_os = "linux")]
-    let smart_paste: Box<dyn crate::application::ports::SmartPaste> = if options.paste {
-        match create_smart_paste().await {
-            Ok(sp) => {
-                eprintln!("Paste: using kdotool+wl-copy+ydotool");
-                sp
-            }
-            Err(e) => {
-                presenter.error(&format!("Paste mode unavailable: {}", e));
-                return ExitCode::from(EXIT_ERROR);
-            }
-        }
-    } else {
-        Box::new(NoOpSmartPaste::new())
-    };
-    #[cfg(not(target_os = "linux"))]
-    let smart_paste: Box<dyn crate::application::ports::SmartPaste> =
-        Box::new(NoOpSmartPaste::new());
-
-    // Create daemon config
-    #[cfg(target_os = "linux")]
     let enable_paste = options.paste;
-    #[cfg(not(target_os = "linux"))]
-    let enable_paste = false;
 
-    let config = DaemonConfig {
+    let daemon_config = DaemonConfig {
         max_duration: options.max_duration,
         enable_clipboard: options.clipboard,
         enable_keystroke: options.keystroke,
         enable_paste,
         enable_notify: options.notify,
+        warning_sink: Some(presenter.warning_sink()),
     };
 
-    // Create use case
+    let audio_cue: Arc<dyn AudioCue> = bundle.audio_cue;
+
     let use_case = DaemonTranscriptionUseCase::new(
-        recorder,
-        transcriber,
-        clipboard,
-        keystroke,
-        notifier,
-        smart_paste,
-        config,
+        crate::application::UseCaseDeps {
+            recorder: bundle.recorder,
+            transcriber: bundle.transcriber,
+            clipboard: bundle.clipboard,
+            keystroke: bundle.keystroke,
+            notifier: bundle.notifier,
+            smart_paste: bundle.smart_paste,
+        },
+        daemon_config,
     );
 
     // Setup signal handler (returns handler + sender for socket server)
@@ -147,7 +98,7 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
         Ok(s) => s,
         Err(e) => {
             presenter.error(&format!("Failed to setup signal handler: {}", e));
-            return ExitCode::from(EXIT_ERROR);
+            return ExitCode::from(exit_codes::ERROR);
         }
     };
 
@@ -157,7 +108,7 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
 
     if let Err(e) = ipc_server.bind() {
         presenter.error(&format!("Failed to bind IPC: {}", e));
-        return ExitCode::from(EXIT_ERROR);
+        return ExitCode::from(exit_codes::ERROR);
     }
 
     // Wrap state and elapsed time in Arc<Mutex> for sharing with IPC server
@@ -213,9 +164,6 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
             .await;
     });
 
-    // Create audio cue adapter
-    let audio_cue: Arc<dyn AudioCue> = Arc::from(create_audio_cue(options.audio_cue));
-
     presenter.daemon_status("Started, waiting for commands...");
     presenter.info(&format!(
         "PID: {} | IPC: {} | SIGINT: exit",
@@ -239,9 +187,9 @@ pub async fn run_daemon(options: DaemonOptions, config: &AppConfig) -> ExitCode 
     let _ = pid_file.release();
 
     if result {
-        ExitCode::from(EXIT_SUCCESS)
+        ExitCode::from(exit_codes::SUCCESS)
     } else {
-        ExitCode::from(EXIT_ERROR)
+        ExitCode::from(exit_codes::ERROR)
     }
 }
 
@@ -340,7 +288,8 @@ where
                         let final_elapsed = use_case.elapsed_ms();
                         match use_case.stop_recording().await {
                             Ok(audio) => {
-                                let audio_size = audio.human_readable_size();
+                                let audio_size =
+                                    super::output::format_audio_size(audio.size_bytes() as u64);
                                 ctx.presenter
                                     .daemon_status(&format!("Processing ({})...", audio_size));
                                 broadcast_state(DaemonState::Processing, final_elapsed);

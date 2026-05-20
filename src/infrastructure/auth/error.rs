@@ -55,3 +55,16 @@ impl From<reqwest::Error> for OAuthError {
         OAuthError::Network(err.to_string())
     }
 }
+
+impl From<OAuthError> for crate::application::ports::TranscriptionError {
+    /// Map auth errors into transcription errors. `InvalidGrant` collapses
+    /// to `NotAuthenticated` so the CLI can surface a clear "run login"
+    /// message; everything else becomes a generic request failure.
+    fn from(err: OAuthError) -> Self {
+        use crate::application::ports::TranscriptionError;
+        match err {
+            OAuthError::InvalidGrant => TranscriptionError::NotAuthenticated,
+            other => TranscriptionError::RequestFailed(other.to_string()),
+        }
+    }
+}

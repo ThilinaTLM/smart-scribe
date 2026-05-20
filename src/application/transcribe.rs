@@ -7,11 +7,12 @@ use thiserror::Error;
 use crate::domain::recording::Duration;
 use crate::domain::transcription::AudioData;
 
+use super::output_dispatcher::{dispatch as dispatch_output, OutputOptions};
 use super::ports::{
-    AudioRecorder, Clipboard, ClipboardError, Keystroke, KeystrokeError, NotificationIcon,
-    Notifier, ProgressCallback, RecordingError, SmartPaste, Transcriber, TranscriptionError,
-    UnboundedRecorder,
+    AudioRecorder, Clipboard, Keystroke, NotificationIcon, Notifier, ProgressCallback,
+    RecordingError, SmartPaste, Transcriber, TranscriptionError, UnboundedRecorder,
 };
+use super::{warn, UseCaseDeps, WarningSink};
 
 /// Errors from the transcribe use case
 #[derive(Debug, Error)]
@@ -24,7 +25,7 @@ pub enum TranscribeError {
 }
 
 /// Input parameters for the transcribe use case
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 pub struct TranscribeInput {
     /// Recording duration
     pub duration: Duration,
@@ -36,18 +37,21 @@ pub struct TranscribeInput {
     pub enable_paste: bool,
     /// Whether to show notifications
     pub enable_notify: bool,
+    /// Optional callback for non-fatal warnings. The CLI plugs the presenter
+    /// in here; tests leave it `None` to silently discard warnings.
+    pub warning_sink: Option<WarningSink>,
 }
 
-#[allow(clippy::derivable_impls)]
-impl Default for TranscribeInput {
-    fn default() -> Self {
-        Self {
-            duration: Duration::default_duration(),
-            enable_clipboard: false,
-            enable_keystroke: false,
-            enable_paste: false,
-            enable_notify: false,
-        }
+impl std::fmt::Debug for TranscribeInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TranscribeInput")
+            .field("duration", &self.duration)
+            .field("enable_clipboard", &self.enable_clipboard)
+            .field("enable_keystroke", &self.enable_keystroke)
+            .field("enable_paste", &self.enable_paste)
+            .field("enable_notify", &self.enable_notify)
+            .field("warning_sink", &self.warning_sink.is_some())
+            .finish()
     }
 }
 
@@ -62,8 +66,8 @@ pub struct TranscribeOutput {
     pub keystroke_sent: bool,
     /// Whether smart paste succeeded (if enabled)
     pub paste_sent: bool,
-    /// Audio file size in human-readable format
-    pub audio_size: String,
+    /// Audio file size in bytes. The presentation layer formats it.
+    pub audio_size_bytes: u64,
 }
 
 /// Callbacks for progress and status updates
@@ -74,8 +78,8 @@ pub struct TranscribeCallbacks {
     pub on_progress: Option<ProgressCallback>,
     /// Called when recording starts
     pub on_recording_start: Option<Box<dyn Fn() + Send + Sync>>,
-    /// Called when recording ends
-    pub on_recording_end: Option<Box<dyn Fn(&str) + Send + Sync>>,
+    /// Called when recording ends, with the captured audio size in bytes.
+    pub on_recording_end: Option<Box<dyn Fn(u64) + Send + Sync>>,
     /// Called when transcription starts
     pub on_transcribing_start: Option<Box<dyn Fn() + Send + Sync>>,
     /// Called when transcription ends
@@ -110,22 +114,15 @@ where
     N: Notifier,
     P: SmartPaste,
 {
-    /// Create a new use case instance
-    pub fn new(
-        recorder: R,
-        transcriber: T,
-        clipboard: C,
-        keystroke: K,
-        notifier: N,
-        smart_paste: P,
-    ) -> Self {
+    /// Create a new use case instance from a [`UseCaseDeps`] bundle.
+    pub fn new(deps: UseCaseDeps<R, T, C, K, N, P>) -> Self {
         Self {
-            recorder,
-            transcriber,
-            clipboard,
-            keystroke,
-            notifier,
-            smart_paste,
+            recorder: deps.recorder,
+            transcriber: deps.transcriber,
+            clipboard: deps.clipboard,
+            keystroke: deps.keystroke,
+            notifier: deps.notifier,
+            smart_paste: deps.smart_paste,
             stop_flag: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -169,7 +166,10 @@ where
         // Capture active window for smart paste (before recording starts)
         if input.enable_paste {
             if let Err(e) = self.smart_paste.capture_active_window().await {
-                eprintln!("Warning: failed to capture active window: {}", e);
+                warn(
+                    input.warning_sink.as_ref(),
+                    &format!("failed to capture active window: {}", e),
+                );
             }
         }
 
@@ -197,10 +197,10 @@ where
         callbacks: &TranscribeCallbacks,
         audio: AudioData,
     ) -> Result<TranscribeOutput, TranscribeError> {
-        let audio_size = audio.human_readable_size();
+        let audio_size_bytes = audio.size_bytes() as u64;
 
         if let Some(ref cb) = callbacks.on_recording_end {
-            cb(&audio_size);
+            cb(audio_size_bytes);
         }
 
         self.transcribe_audio(input, callbacks, audio).await
@@ -212,7 +212,7 @@ where
         callbacks: &TranscribeCallbacks,
         audio: AudioData,
     ) -> Result<TranscribeOutput, TranscribeError> {
-        let audio_size = audio.human_readable_size();
+        let audio_size_bytes = audio.size_bytes() as u64;
 
         // Notify transcription start
         if input.enable_notify {
@@ -237,63 +237,22 @@ where
             cb();
         }
 
-        // Perform output actions (non-fatal)
-        let clipboard_copied = if input.enable_clipboard {
-            match self.clipboard.copy(&text).await {
-                Ok(()) => true,
-                Err(ClipboardError::WlCopyNotFound) => {
-                    eprintln!("Warning: wl-copy not found, skipping clipboard");
-                    false
-                }
-                Err(e) => {
-                    eprintln!("Warning: clipboard copy failed: {}", e);
-                    false
-                }
-            }
-        } else {
-            false
+        // Output actions are best-effort and delegated to the shared
+        // dispatcher so the daemon flow can reuse the same logic.
+        let opts = OutputOptions {
+            clipboard: input.enable_clipboard,
+            keystroke: input.enable_keystroke,
+            paste: input.enable_paste,
         };
-
-        let keystroke_sent = if input.enable_keystroke {
-            match self.keystroke.type_text(&text).await {
-                Ok(()) => true,
-                Err(KeystrokeError::NoToolAvailable) => {
-                    eprintln!("Warning: no keystroke tool available, skipping keystroke");
-                    false
-                }
-                Err(KeystrokeError::YdotoolNotAvailable) => {
-                    eprintln!("Warning: ydotool not available, skipping keystroke");
-                    false
-                }
-                Err(KeystrokeError::WtypeNotFound) => {
-                    eprintln!("Warning: wtype not found, skipping keystroke");
-                    false
-                }
-                Err(KeystrokeError::XdotoolNotFound) => {
-                    eprintln!("Warning: xdotool not found, skipping keystroke");
-                    false
-                }
-                Err(e) => {
-                    eprintln!("Warning: keystroke failed: {}", e);
-                    false
-                }
-            }
-        } else {
-            false
-        };
-
-        // Smart paste: paste into captured window via clipboard
-        let paste_sent = if input.enable_paste {
-            match self.smart_paste.paste(&text).await {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("Warning: smart paste failed: {}", e);
-                    false
-                }
-            }
-        } else {
-            false
-        };
+        let result = dispatch_output(
+            &self.clipboard,
+            &self.keystroke,
+            &self.smart_paste,
+            &text,
+            opts,
+            input.warning_sink.as_ref(),
+        )
+        .await;
 
         // Notify completion
         if input.enable_notify {
@@ -309,10 +268,10 @@ where
 
         Ok(TranscribeOutput {
             text,
-            clipboard_copied,
-            keystroke_sent,
-            paste_sent,
-            audio_size,
+            clipboard_copied: result.clipboard_copied,
+            keystroke_sent: result.keystroke_sent,
+            paste_sent: result.paste_sent,
+            audio_size_bytes,
         })
     }
 }
@@ -368,7 +327,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::SmartPasteError;
+    use crate::application::ports::{ClipboardError, KeystrokeError, SmartPasteError};
     use crate::domain::transcription::AudioData;
     use async_trait::async_trait;
 
@@ -442,14 +401,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_returns_transcription() {
-        let use_case = TranscribeRecordingUseCase::new(
-            MockRecorder,
-            MockTranscriber,
-            MockClipboard,
-            MockKeystroke,
-            MockNotifier,
-            MockSmartPaste,
-        );
+        let use_case = TranscribeRecordingUseCase::new(UseCaseDeps {
+            recorder: MockRecorder,
+            transcriber: MockTranscriber,
+            clipboard: MockClipboard,
+            keystroke: MockKeystroke,
+            notifier: MockNotifier,
+            smart_paste: MockSmartPaste,
+        });
 
         let input = TranscribeInput::default();
         let callbacks = TranscribeCallbacks::default();
@@ -462,14 +421,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_with_clipboard_enabled() {
-        let use_case = TranscribeRecordingUseCase::new(
-            MockRecorder,
-            MockTranscriber,
-            MockClipboard,
-            MockKeystroke,
-            MockNotifier,
-            MockSmartPaste,
-        );
+        let use_case = TranscribeRecordingUseCase::new(UseCaseDeps {
+            recorder: MockRecorder,
+            transcriber: MockTranscriber,
+            clipboard: MockClipboard,
+            keystroke: MockKeystroke,
+            notifier: MockNotifier,
+            smart_paste: MockSmartPaste,
+        });
 
         let input = TranscribeInput {
             enable_clipboard: true,
@@ -483,14 +442,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_with_keystroke_enabled() {
-        let use_case = TranscribeRecordingUseCase::new(
-            MockRecorder,
-            MockTranscriber,
-            MockClipboard,
-            MockKeystroke,
-            MockNotifier,
-            MockSmartPaste,
-        );
+        let use_case = TranscribeRecordingUseCase::new(UseCaseDeps {
+            recorder: MockRecorder,
+            transcriber: MockTranscriber,
+            clipboard: MockClipboard,
+            keystroke: MockKeystroke,
+            notifier: MockNotifier,
+            smart_paste: MockSmartPaste,
+        });
 
         let input = TranscribeInput {
             enable_keystroke: true,

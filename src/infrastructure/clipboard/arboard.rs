@@ -29,8 +29,11 @@ impl Clipboard for ArboardClipboard {
 
         // arboard operations are blocking, so run in spawn_blocking
         tokio::task::spawn_blocking(move || {
-            let mut clipboard = arboard::Clipboard::new()
-                .map_err(|e| ClipboardError::ClipboardUnavailable(e.to_string()))?;
+            let mut clipboard =
+                arboard::Clipboard::new().map_err(|e| ClipboardError::BackendUnavailable {
+                    tool: "arboard".to_string(),
+                    reason: e.to_string(),
+                })?;
 
             clipboard
                 .set_text(&text)

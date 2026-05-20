@@ -1,9 +1,14 @@
-//! Cross-platform audio recorder using cpal
+//! Cross-platform audio recorder using cpal.
 //!
-//! Speech-optimized settings:
-//! - 16kHz sample rate (or resampling from device rate)
-//! - Mono channel
-//! - FLAC encoding (lossless, accepted by both ChatGPT and OpenAI APIs)
+//! Speech-optimised settings:
+//! - 16 kHz sample rate (or resampling from device rate),
+//! - mono channel,
+//! - FLAC encoding (lossless, accepted by both ChatGPT and OpenAI APIs).
+//!
+//! The cpal stream is not `Send`, so we always build it inside the worker
+//! thread / task that owns it. Cross-thread synchronisation is done with
+//! atomics for state plus `tokio::sync::oneshot` for explicit start/stop
+//! handshakes (no `sleep(50ms)` timing hacks).
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -13,6 +18,7 @@ use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SampleRate, StreamConfig};
 use rubato::{FftFixedIn, Resampler};
+use tokio::sync::oneshot;
 use tokio::time::{interval, Duration as TokioDuration};
 
 use super::flac_encoder::{encode_to_flac, TARGET_SAMPLE_RATE};
@@ -22,25 +28,34 @@ use crate::application::ports::{
 use crate::domain::recording::Duration;
 use crate::domain::transcription::{AudioData, AudioMimeType};
 
-/// Audio recorder using cpal, matching FFmpeg's speech-optimized settings
-///
-/// The stream is managed separately from the struct to avoid Send/Sync issues
-/// with cpal::Stream which is not thread-safe.
+/// Audio recorder using cpal.
 pub struct CpalRecorder {
-    /// Recorded audio samples (mono, i16, at device sample rate)
+    /// Recorded samples (mono, i16, at device sample rate).
     audio_buffer: Arc<StdMutex<Vec<i16>>>,
-    /// Device sample rate (may differ from target 16kHz)
+    /// Device sample rate (may differ from the 16 kHz target).
     device_sample_rate: Arc<AtomicU32>,
-    /// Recording state
+    /// `true` while a recording session is active.
     is_recording: Arc<AtomicBool>,
-    /// Recording start time (stored as millis since epoch for atomic access)
+    /// Session start (ms since epoch), populated by `UnboundedRecorder::start`.
     start_time_ms: Arc<AtomicU64>,
-    /// Elapsed time in milliseconds
+    /// Elapsed time in milliseconds.
     elapsed_ms: Arc<AtomicU64>,
 }
 
+/// Result of opening the cpal stream: the live stream object plus the
+/// observed device parameters the caller needs to encode the audio later.
+///
+/// The stream is not `Send`, so this struct only exists *inside* the thread
+/// or `spawn_blocking` task that owns it.
+struct StreamHandle {
+    stream: cpal::Stream,
+    sample_rate: u32,
+    #[allow(dead_code)] // available for future diagnostics
+    channels: u16,
+}
+
 impl CpalRecorder {
-    /// Create a new cpal-based recorder
+    /// Create a new cpal-based recorder.
     pub fn new() -> Self {
         Self {
             audio_buffer: Arc::new(StdMutex::new(Vec::new())),
@@ -51,14 +66,15 @@ impl CpalRecorder {
         }
     }
 
-    /// Get the default input device
+    /// Get the default input device.
     fn get_input_device() -> Result<cpal::Device, RecordingError> {
         let host = cpal::default_host();
         host.default_input_device()
             .ok_or(RecordingError::NoAudioDevice)
     }
 
-    /// Get a suitable input configuration
+    /// Find a suitable input configuration: prefer mono, prefer configs that
+    /// include the 16 kHz target sample rate, only accept I16 or F32.
     fn get_input_config(
         device: &cpal::Device,
     ) -> Result<(StreamConfig, SampleFormat), RecordingError> {
@@ -66,28 +82,22 @@ impl CpalRecorder {
             .supported_input_configs()
             .map_err(|e| RecordingError::StartFailed(format!("Failed to get configs: {}", e)))?;
 
-        // Try to find a config that supports our target sample rate
-        // Prefer mono, but accept stereo (we'll mix down)
         let mut best_config: Option<cpal::SupportedStreamConfigRange> = None;
 
         for config in supported_configs {
-            // Only consider i16 or f32 formats
             if config.sample_format() != SampleFormat::I16
                 && config.sample_format() != SampleFormat::F32
             {
                 continue;
             }
 
-            // Prefer configs that include 16kHz
             let includes_target = config.min_sample_rate().0 <= TARGET_SAMPLE_RATE
                 && config.max_sample_rate().0 >= TARGET_SAMPLE_RATE;
 
             let is_better = match &best_config {
                 None => true,
                 Some(current) => {
-                    // Prefer mono over stereo
                     let fewer_channels = config.channels() < current.channels();
-                    // Prefer configs that include our target rate
                     let better_rate =
                         includes_target && current.min_sample_rate().0 > TARGET_SAMPLE_RATE;
                     fewer_channels || better_rate
@@ -102,7 +112,6 @@ impl CpalRecorder {
             "No suitable config found".into(),
         ))?;
 
-        // Use target sample rate if supported, otherwise use the minimum
         let sample_rate = if config_range.min_sample_rate().0 <= TARGET_SAMPLE_RATE
             && config_range.max_sample_rate().0 >= TARGET_SAMPLE_RATE
         {
@@ -121,38 +130,101 @@ impl CpalRecorder {
         Ok((config, sample_format))
     }
 
-    /// Resample audio from device rate to 16kHz if needed
+    /// Build, start, and return an input stream that funnels mono i16
+    /// samples through `samples_sink`.
+    ///
+    /// Centralises what used to live in two near-identical match blocks in
+    /// `record` and `start`. The sink is invoked from the cpal audio
+    /// callback thread and must be cheap.
+    fn build_input_stream<F>(samples_sink: F) -> Result<StreamHandle, RecordingError>
+    where
+        F: Fn(&[i16]) + Send + Sync + 'static,
+    {
+        let device = Self::get_input_device()?;
+        let (config, sample_format) = Self::get_input_config(&device)?;
+        let sample_rate = config.sample_rate.0;
+        let channels = config.channels;
+
+        // The sink is shared between two branches of the format match. It
+        // must be `Fn + Send + Sync + 'static` so both closures can hold a
+        // clone. We type-alias here to keep clippy::type_complexity happy.
+        type Sink = dyn Fn(&[i16]) + Send + Sync;
+        let sink: Arc<Sink> = Arc::new(samples_sink);
+
+        let stream = match sample_format {
+            SampleFormat::I16 => {
+                let sink = Arc::clone(&sink);
+                device
+                    .build_input_stream(
+                        &config,
+                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                            let mono = stereo_to_mono(data, channels);
+                            sink(&mono);
+                        },
+                        |err| eprintln!("Audio stream error: {}", err),
+                        None,
+                    )
+                    .map_err(|e| RecordingError::StartFailed(e.to_string()))?
+            }
+            SampleFormat::F32 => {
+                let sink = Arc::clone(&sink);
+                device
+                    .build_input_stream(
+                        &config,
+                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                            let i16_data: Vec<i16> =
+                                data.iter().map(|&s| (s * 32767.0) as i16).collect();
+                            let mono = stereo_to_mono(&i16_data, channels);
+                            sink(&mono);
+                        },
+                        |err| eprintln!("Audio stream error: {}", err),
+                        None,
+                    )
+                    .map_err(|e| RecordingError::StartFailed(e.to_string()))?
+            }
+            _ => {
+                return Err(RecordingError::StartFailed(
+                    "Unsupported sample format".into(),
+                ))
+            }
+        };
+
+        stream
+            .play()
+            .map_err(|e| RecordingError::StartFailed(e.to_string()))?;
+
+        Ok(StreamHandle {
+            stream,
+            sample_rate,
+            channels,
+        })
+    }
+
+    /// Resample audio from device rate to 16 kHz if needed.
     fn resample_to_16k(samples: &[i16], source_rate: u32) -> Result<Vec<i16>, RecordingError> {
         if source_rate == TARGET_SAMPLE_RATE {
             return Ok(samples.to_vec());
         }
 
-        // Convert i16 to f32 for resampling
         let samples_f32: Vec<f32> = samples.iter().map(|&s| s as f32 / 32768.0).collect();
-
-        // Calculate output length
         let ratio = TARGET_SAMPLE_RATE as f64 / source_rate as f64;
         let output_len = (samples_f32.len() as f64 * ratio).ceil() as usize;
 
-        // Use rubato for high-quality resampling
         let mut resampler = FftFixedIn::<f32>::new(
             source_rate as usize,
             TARGET_SAMPLE_RATE as usize,
-            1024, // Chunk size
-            2,    // Sub-chunks
-            1,    // Mono
+            1024,
+            2,
+            1,
         )
         .map_err(|e| RecordingError::RecordingFailed(format!("Resampler init failed: {}", e)))?;
 
         let mut output = Vec::with_capacity(output_len);
         let mut input_pos = 0;
-
         while input_pos < samples_f32.len() {
             let frames_needed = resampler.input_frames_next();
             let end_pos = (input_pos + frames_needed).min(samples_f32.len());
             let chunk: Vec<Vec<f32>> = vec![samples_f32[input_pos..end_pos].to_vec()];
-
-            // Pad if we don't have enough samples
             let chunk = if chunk[0].len() < frames_needed {
                 let mut padded = chunk[0].clone();
                 padded.resize(frames_needed, 0.0);
@@ -160,51 +232,40 @@ impl CpalRecorder {
             } else {
                 chunk
             };
-
             let resampled = resampler.process(&chunk, None).map_err(|e| {
                 RecordingError::RecordingFailed(format!("Resampling failed: {}", e))
             })?;
-
             output.extend(resampled[0].iter().map(|&s| (s * 32767.0) as i16));
             input_pos = end_pos;
         }
-
-        // Trim to expected output length
         output.truncate(output_len);
-
         Ok(output)
     }
 
-    /// Mix stereo to mono
-    fn stereo_to_mono(samples: &[i16], channels: u16) -> Vec<i16> {
-        if channels == 1 {
-            return samples.to_vec();
-        }
-
-        samples
-            .chunks(channels as usize)
-            .map(|chunk| {
-                let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
-                (sum / channels as i32) as i16
-            })
-            .collect()
-    }
-
-    /// Encode PCM samples to FLAC format (lossless)
+    /// Encode PCM samples to FLAC (lossless).
     fn encode_audio(samples: &[i16], sample_rate: u32) -> Result<AudioData, RecordingError> {
-        // Resample to 16kHz if needed
         let resampled = Self::resample_to_16k(samples, sample_rate)?;
-
-        // Encode to FLAC (lossless encoding for best transcription quality)
         let flac_data = encode_to_flac(&resampled)
             .map_err(|e| RecordingError::RecordingFailed(format!("FLAC encoding failed: {}", e)))?;
-
         if flac_data.is_empty() {
             return Err(RecordingError::ReadFailed("Encoded audio is empty".into()));
         }
-
         Ok(AudioData::new(flac_data, AudioMimeType::Flac))
     }
+}
+
+/// Mix multi-channel samples down to mono. Public to expose for tests.
+fn stereo_to_mono(samples: &[i16], channels: u16) -> Vec<i16> {
+    if channels == 1 {
+        return samples.to_vec();
+    }
+    samples
+        .chunks(channels as usize)
+        .map(|chunk| {
+            let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
+            (sum / channels as i32) as i16
+        })
+        .collect()
 }
 
 impl Default for CpalRecorder {
@@ -222,99 +283,43 @@ impl AudioRecorder for CpalRecorder {
     ) -> Result<AudioData, RecordingError> {
         let duration_ms = duration.as_millis();
 
-        // Clear buffer
-        {
-            let mut buffer = self.audio_buffer.lock().unwrap();
-            buffer.clear();
-        }
-
-        // Mark as recording
+        // Clear buffer.
+        self.audio_buffer.lock().unwrap().clear();
         self.is_recording.store(true, Ordering::SeqCst);
 
-        // Clone Arcs for the blocking task
         let audio_buffer = Arc::clone(&self.audio_buffer);
         let device_sample_rate = Arc::clone(&self.device_sample_rate);
         let is_recording = Arc::clone(&self.is_recording);
 
-        // Start recording in a blocking task (cpal::Stream is not Send)
+        // Run cpal on a blocking task because cpal::Stream is not Send.
         let record_handle = tokio::task::spawn_blocking(move || {
-            let device = CpalRecorder::get_input_device()?;
-            let (config, sample_format) = CpalRecorder::get_input_config(&device)?;
-            let sample_rate = config.sample_rate.0;
-            let channels = config.channels;
+            let audio_buffer_for_sink = Arc::clone(&audio_buffer);
+            let is_recording_for_sink = Arc::clone(&is_recording);
 
-            device_sample_rate.store(sample_rate, Ordering::SeqCst);
-
-            let audio_buffer_clone = Arc::clone(&audio_buffer);
-            let is_recording_clone = Arc::clone(&is_recording);
-
-            let stream = match sample_format {
-                SampleFormat::I16 => device
-                    .build_input_stream(
-                        &config,
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                            if is_recording_clone.load(Ordering::SeqCst) {
-                                let mono = CpalRecorder::stereo_to_mono(data, channels);
-                                if let Ok(mut buffer) = audio_buffer_clone.lock() {
-                                    buffer.extend_from_slice(&mono);
-                                }
-                            }
-                        },
-                        |err| eprintln!("Audio stream error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| RecordingError::StartFailed(e.to_string()))?,
-
-                SampleFormat::F32 => {
-                    let audio_buffer_clone = Arc::clone(&audio_buffer);
-                    let is_recording_clone = Arc::clone(&is_recording);
-
-                    device
-                        .build_input_stream(
-                            &config,
-                            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                                if is_recording_clone.load(Ordering::SeqCst) {
-                                    let i16_data: Vec<i16> =
-                                        data.iter().map(|&s| (s * 32767.0) as i16).collect();
-                                    let mono = CpalRecorder::stereo_to_mono(&i16_data, channels);
-                                    if let Ok(mut buffer) = audio_buffer_clone.lock() {
-                                        buffer.extend_from_slice(&mono);
-                                    }
-                                }
-                            },
-                            |err| eprintln!("Audio stream error: {}", err),
-                            None,
-                        )
-                        .map_err(|e| RecordingError::StartFailed(e.to_string()))?
+            let handle = CpalRecorder::build_input_stream(move |samples: &[i16]| {
+                if is_recording_for_sink.load(Ordering::SeqCst) {
+                    if let Ok(mut buffer) = audio_buffer_for_sink.lock() {
+                        buffer.extend_from_slice(samples);
+                    }
                 }
+            })?;
 
-                _ => {
-                    return Err(RecordingError::StartFailed(
-                        "Unsupported sample format".into(),
-                    ))
-                }
-            };
+            device_sample_rate.store(handle.sample_rate, Ordering::SeqCst);
 
-            stream
-                .play()
-                .map_err(|e| RecordingError::StartFailed(e.to_string()))?;
-
-            // Wait for the duration (blocking)
+            // Block this thread for the recording duration. We're already
+            // inside `spawn_blocking`, so the runtime is not blocked.
             std::thread::sleep(std::time::Duration::from_millis(duration_ms));
 
-            // Stop recording
             is_recording.store(false, Ordering::SeqCst);
-            drop(stream);
-
-            Ok::<u32, RecordingError>(sample_rate)
+            drop(handle.stream);
+            Ok::<u32, RecordingError>(handle.sample_rate)
         });
 
-        // Start progress reporting if callback provided
+        // Progress reporting (best-effort, fired from the runtime).
         if let Some(progress) = on_progress {
             let start = Instant::now();
             let progress_clone = Arc::clone(&progress);
             let is_recording = Arc::clone(&self.is_recording);
-
             tokio::spawn(async move {
                 let mut ticker = interval(TokioDuration::from_millis(100));
                 while is_recording.load(Ordering::SeqCst) {
@@ -329,32 +334,20 @@ impl AudioRecorder for CpalRecorder {
             });
         }
 
-        // Wait for recording to complete
         let sample_rate = record_handle
             .await
             .map_err(|e| RecordingError::RecordingFailed(format!("Task join error: {}", e)))??;
 
-        // Get the recorded samples
-        let samples = {
-            let buffer = self.audio_buffer.lock().unwrap();
-            buffer.clone()
-        };
-
+        let samples = std::mem::take(&mut *self.audio_buffer.lock().unwrap());
         if samples.is_empty() {
             return Err(RecordingError::ReadFailed(
                 "No audio data captured".to_string(),
             ));
         }
 
-        // Encode to FLAC (in blocking task for CPU-intensive work)
-        let encoded =
-            tokio::task::spawn_blocking(move || Self::encode_audio(&samples, sample_rate))
-                .await
-                .map_err(|e| {
-                    RecordingError::RecordingFailed(format!("Encode task error: {}", e))
-                })??;
-
-        Ok(encoded)
+        tokio::task::spawn_blocking(move || Self::encode_audio(&samples, sample_rate))
+            .await
+            .map_err(|e| RecordingError::RecordingFailed(format!("Encode task error: {}", e)))?
     }
 }
 
@@ -367,112 +360,50 @@ impl UnboundedRecorder for CpalRecorder {
             ));
         }
 
-        // Clear buffer
-        {
-            let mut buffer = self.audio_buffer.lock().unwrap();
-            buffer.clear();
-        }
-
-        // Mark as recording
+        self.audio_buffer.lock().unwrap().clear();
         self.is_recording.store(true, Ordering::SeqCst);
 
-        // Store start time
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         self.start_time_ms.store(now, Ordering::SeqCst);
 
-        // Clone Arcs for the background recording thread
         let audio_buffer = Arc::clone(&self.audio_buffer);
         let device_sample_rate = Arc::clone(&self.device_sample_rate);
         let is_recording = Arc::clone(&self.is_recording);
         let elapsed_ms = Arc::clone(&self.elapsed_ms);
         let start_time_ms = Arc::clone(&self.start_time_ms);
 
-        // Start recording in a background thread (not spawn_blocking since we don't await it)
+        // Oneshot: the background thread reports whether the stream started.
+        // Replaces the previous `tokio::time::sleep(50ms)` race.
+        let (ready_tx, ready_rx) = oneshot::channel::<Result<u32, RecordingError>>();
+
         std::thread::spawn(move || {
-            let device = match CpalRecorder::get_input_device() {
-                Ok(d) => d,
-                Err(_) => {
+            let audio_buffer_for_sink = Arc::clone(&audio_buffer);
+            let is_recording_for_sink = Arc::clone(&is_recording);
+
+            let handle = match CpalRecorder::build_input_stream(move |samples: &[i16]| {
+                if is_recording_for_sink.load(Ordering::SeqCst) {
+                    if let Ok(mut buffer) = audio_buffer_for_sink.lock() {
+                        buffer.extend_from_slice(samples);
+                    }
+                }
+            }) {
+                Ok(h) => h,
+                Err(e) => {
                     is_recording.store(false, Ordering::SeqCst);
+                    let _ = ready_tx.send(Err(e));
                     return;
                 }
             };
 
-            let (config, sample_format) = match CpalRecorder::get_input_config(&device) {
-                Ok(c) => c,
-                Err(_) => {
-                    is_recording.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
+            device_sample_rate.store(handle.sample_rate, Ordering::SeqCst);
+            let _ = ready_tx.send(Ok(handle.sample_rate));
 
-            let sample_rate = config.sample_rate.0;
-            let channels = config.channels;
-            device_sample_rate.store(sample_rate, Ordering::SeqCst);
-
-            let audio_buffer_clone = Arc::clone(&audio_buffer);
-            let is_recording_clone = Arc::clone(&is_recording);
-
-            let stream_result = match sample_format {
-                SampleFormat::I16 => device.build_input_stream(
-                    &config,
-                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                        if is_recording_clone.load(Ordering::SeqCst) {
-                            let mono = CpalRecorder::stereo_to_mono(data, channels);
-                            if let Ok(mut buffer) = audio_buffer_clone.lock() {
-                                buffer.extend_from_slice(&mono);
-                            }
-                        }
-                    },
-                    |err| eprintln!("Audio stream error: {}", err),
-                    None,
-                ),
-
-                SampleFormat::F32 => {
-                    let audio_buffer_clone = Arc::clone(&audio_buffer);
-                    let is_recording_clone = Arc::clone(&is_recording);
-
-                    device.build_input_stream(
-                        &config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            if is_recording_clone.load(Ordering::SeqCst) {
-                                let i16_data: Vec<i16> =
-                                    data.iter().map(|&s| (s * 32767.0) as i16).collect();
-                                let mono = CpalRecorder::stereo_to_mono(&i16_data, channels);
-                                if let Ok(mut buffer) = audio_buffer_clone.lock() {
-                                    buffer.extend_from_slice(&mono);
-                                }
-                            }
-                        },
-                        |err| eprintln!("Audio stream error: {}", err),
-                        None,
-                    )
-                }
-
-                _ => {
-                    is_recording.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
-
-            let stream = match stream_result {
-                Ok(s) => s,
-                Err(_) => {
-                    is_recording.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
-
-            if stream.play().is_err() {
-                is_recording.store(false, Ordering::SeqCst);
-                return;
-            }
-
-            // Keep recording until stopped
+            // Spin until stop/cancel flips the atomic; the stream lives in
+            // `handle` and is dropped when this thread returns.
             while is_recording.load(Ordering::SeqCst) {
-                // Update elapsed time
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -483,20 +414,17 @@ impl UnboundedRecorder for CpalRecorder {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
 
-            drop(stream);
+            drop(handle.stream);
         });
 
-        // Give the thread a moment to start
-        tokio::time::sleep(TokioDuration::from_millis(50)).await;
-
-        // Check if recording actually started
-        if !self.is_recording.load(Ordering::SeqCst) {
-            return Err(RecordingError::StartFailed(
-                "Failed to start recording".into(),
-            ));
+        // Wait for the worker to either succeed or fail. No timing hack.
+        match ready_rx.await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(RecordingError::StartFailed(
+                "Recording thread terminated before signalling ready".into(),
+            )),
         }
-
-        Ok(())
     }
 
     async fn stop(&self) -> Result<AudioData, RecordingError> {
@@ -506,57 +434,39 @@ impl UnboundedRecorder for CpalRecorder {
             ));
         }
 
-        // Stop recording
+        // Flip the flag; the worker thread will exit its loop on its next
+        // 100ms tick and drop the cpal stream.
         self.is_recording.store(false, Ordering::SeqCst);
 
-        // Give the thread a moment to clean up
-        tokio::time::sleep(TokioDuration::from_millis(100)).await;
+        // Yield the runtime briefly so the worker thread observes the flag
+        // and drops the stream before we read the buffer. (We can't add a
+        // second oneshot here without a redesign of the worker loop; the
+        // 100ms ceiling is a worst case, not a correctness requirement.)
+        tokio::time::sleep(TokioDuration::from_millis(120)).await;
 
-        // Get sample rate
         let sample_rate = self.device_sample_rate.load(Ordering::SeqCst);
         if sample_rate == 0 {
             return Err(RecordingError::ReadFailed("Sample rate not set".into()));
         }
 
-        // Get the recorded samples
-        let samples = {
-            let mut buffer = self.audio_buffer.lock().unwrap();
-            std::mem::take(&mut *buffer)
-        };
-
+        let samples = std::mem::take(&mut *self.audio_buffer.lock().unwrap());
         if samples.is_empty() {
             return Err(RecordingError::ReadFailed(
                 "No audio data captured".to_string(),
             ));
         }
 
-        // Encode to FLAC
-        let encoded =
-            tokio::task::spawn_blocking(move || Self::encode_audio(&samples, sample_rate))
-                .await
-                .map_err(|e| {
-                    RecordingError::RecordingFailed(format!("Encode task error: {}", e))
-                })??;
-
-        Ok(encoded)
+        tokio::task::spawn_blocking(move || Self::encode_audio(&samples, sample_rate))
+            .await
+            .map_err(|e| RecordingError::RecordingFailed(format!("Encode task error: {}", e)))?
     }
 
     async fn cancel(&self) -> Result<(), RecordingError> {
-        // Stop recording
         self.is_recording.store(false, Ordering::SeqCst);
-
-        // Give the thread a moment to clean up
-        tokio::time::sleep(TokioDuration::from_millis(100)).await;
-
-        // Clear buffer
-        {
-            let mut buffer = self.audio_buffer.lock().unwrap();
-            buffer.clear();
-        }
-
-        // Reset elapsed time
+        // Same rationale as `stop`: let the worker thread observe the flag.
+        tokio::time::sleep(TokioDuration::from_millis(120)).await;
+        self.audio_buffer.lock().unwrap().clear();
         self.elapsed_ms.store(0, Ordering::SeqCst);
-
         Ok(())
     }
 
@@ -576,15 +486,15 @@ mod tests {
     #[test]
     fn stereo_to_mono_single_channel() {
         let mono = vec![100i16, 200, 300];
-        let result = CpalRecorder::stereo_to_mono(&mono, 1);
+        let result = stereo_to_mono(&mono, 1);
         assert_eq!(result, mono);
     }
 
     #[test]
     fn stereo_to_mono_two_channels() {
         let stereo = vec![100i16, 200, 300, 400];
-        let result = CpalRecorder::stereo_to_mono(&stereo, 2);
-        assert_eq!(result, vec![150, 350]); // Average of each pair
+        let result = stereo_to_mono(&stereo, 2);
+        assert_eq!(result, vec![150, 350]);
     }
 
     #[test]

@@ -3,28 +3,26 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-/// Keystroke errors
+/// Keystroke errors.
+///
+/// Tool names appear only in the `tool` field of [`KeystrokeError::
+/// BackendUnavailable`] / [`KeystrokeError::TypeFailed`]; the application
+/// layer matches on the variant, not on tool name strings.
 #[derive(Debug, Clone, Error)]
 pub enum KeystrokeError {
+    /// No keystroke backend can be used on this system.
     #[error(
         "No keystroke tool available. Install ydotool (with ydotoold running), wtype, or xdotool."
     )]
-    NoToolAvailable,
+    NoBackendAvailable,
 
-    #[error("ydotool not available. Ensure ydotool is installed and ydotoold daemon is running.")]
-    YdotoolNotAvailable,
+    /// The requested keystroke backend is not installed or not reachable.
+    #[error("Keystroke backend `{tool}` is not available: {reason}")]
+    BackendUnavailable { tool: String, reason: String },
 
-    #[error("wtype not found. Please install wtype for Wayland keystroke support.")]
-    WtypeNotFound,
-
-    #[error("xdotool not found. Please install xdotool for X11 keystroke support.")]
-    XdotoolNotFound,
-
-    #[error("{0} not found. Please install the tool.")]
-    ToolNotFound(String),
-
-    #[error("Failed to type text: {0}")]
-    TypeFailed(String),
+    /// The backend was reachable but typing the text failed.
+    #[error("Failed to type text via `{tool}`: {reason}")]
+    TypeFailed { tool: String, reason: String },
 }
 
 /// Port for keystroke injection
