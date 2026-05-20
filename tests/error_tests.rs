@@ -6,6 +6,12 @@ fn smart_scribe_bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_smart-scribe"))
 }
 
+// Skipped on Windows: this test redirects the config dir via XDG_CONFIG_HOME
+// and HOME, but on Windows `dirs::config_dir()` resolves %APPDATA% through
+// SHGetKnownFolderPath and ignores env vars, so the binary loads the runner's
+// real config instead of the tmp `auth = api_key` one. Linux + macOS coverage
+// exercises the same code path.
+#[cfg(not(windows))]
 #[test]
 fn missing_api_key_in_api_mode_errors_quickly() {
     // Force `auth = api_key` via a tmp config so the missing-key check fires
