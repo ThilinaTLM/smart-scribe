@@ -30,6 +30,8 @@ pub struct ChatGptOAuthTranscriber {
     client: reqwest::Client,
     device_id: String,
     model: String,
+    prompt: Option<String>,
+    language: Option<String>,
     cached: Mutex<Option<OAuthToken>>,
 }
 
@@ -40,8 +42,25 @@ impl ChatGptOAuthTranscriber {
             client: reqwest::Client::new(),
             device_id: Uuid::new_v4().to_string(),
             model: model.into(),
+            prompt: None,
+            language: None,
             cached: Mutex::new(None),
         }
+    }
+
+    /// Builder: attach a transcription prompt. Verified accepted (HTTP 200);
+    /// the OAuth endpoint may or may not factor it into the result \u2014 included
+    /// for forward compatibility and parity with the API path.
+    pub fn with_prompt(mut self, prompt: Option<String>) -> Self {
+        self.prompt = prompt.filter(|s| !s.trim().is_empty());
+        self
+    }
+
+    /// Builder: attach an ISO 639-1 language hint. Empirically respected by
+    /// the OAuth endpoint.
+    pub fn with_language(mut self, language: Option<String>) -> Self {
+        self.language = language.filter(|s| !s.trim().is_empty());
+        self
     }
 
     pub fn model(&self) -> &str {
@@ -100,15 +119,27 @@ impl ChatGptOAuthTranscriber {
 
     async fn do_transcribe(&self, audio: &AudioData) -> Result<String, TranscriptionError> {
         let token = self.current_token().await?;
-        send_transcribe(&self.client, &token, &self.device_id, &self.model, audio).await
+        send_transcribe(
+            &self.client,
+            &token,
+            &self.device_id,
+            &self.model,
+            self.prompt.as_deref(),
+            self.language.as_deref(),
+            audio,
+        )
+        .await
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_transcribe(
     client: &reqwest::Client,
     token: &OAuthToken,
     device_id: &str,
     model: &str,
+    prompt: Option<&str>,
+    language: Option<&str>,
     audio: &AudioData,
 ) -> Result<String, TranscriptionError> {
     let mime_str = audio.mime_type().as_str();
@@ -126,10 +157,16 @@ async fn send_transcribe(
         .mime_str(mime_str)
         .map_err(|e| TranscriptionError::RequestFailed(e.to_string()))?;
 
-    let form = reqwest::multipart::Form::new()
+    let mut form = reqwest::multipart::Form::new()
         .part("file", file_part)
         .text("duration_ms", duration_ms.to_string())
         .text("model", model.to_string());
+    if let Some(p) = prompt {
+        form = form.text("prompt", p.to_string());
+    }
+    if let Some(l) = language {
+        form = form.text("language", l.to_string());
+    }
 
     let response = client
         .post(TRANSCRIBE_URL)
@@ -264,5 +301,18 @@ mod tests {
         let store = OAuthStore::with_path(dir.path().join("oauth.json"));
         let t = ChatGptOAuthTranscriber::new(store, "whisper-1");
         assert_eq!(t.model(), "whisper-1");
+        assert!(t.prompt.is_none());
+        assert!(t.language.is_none());
+    }
+
+    #[test]
+    fn builder_stores_prompt_and_language_trimmed() {
+        let dir = tempdir().unwrap();
+        let store = OAuthStore::with_path(dir.path().join("oauth.json"));
+        let t = ChatGptOAuthTranscriber::new(store, "m")
+            .with_prompt(Some("  ".into()))
+            .with_language(Some("en".into()));
+        assert!(t.prompt.is_none());
+        assert_eq!(t.language.as_deref(), Some("en"));
     }
 }

@@ -241,6 +241,8 @@ pub const VALID_CONFIG_KEYS: &[&str] = &[
     "auth",
     "openai_api_key",
     "openai_transcribe_model",
+    "transcribe_prompt",
+    "transcribe_language",
     "duration",
     "max_duration",
     "clipboard",

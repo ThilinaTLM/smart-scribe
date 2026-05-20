@@ -78,6 +78,8 @@ async fn handle_set<S: ConfigStore>(
         }
         "openai_api_key" => config.openai_api_key = Some(value.to_string()),
         "openai_transcribe_model" => config.openai_transcribe_model = Some(value.to_string()),
+        "transcribe_prompt" => config.transcribe_prompt = Some(value.to_string()),
+        "transcribe_language" => config.transcribe_language = Some(value.to_string()),
         "duration" => config.duration = Some(value.to_string()),
         "max_duration" => config.max_duration = Some(value.to_string()),
         "clipboard" => {
@@ -214,6 +216,8 @@ async fn handle_get<S: ConfigStore>(
         "auth" => config.auth,
         "openai_api_key" => config.openai_api_key.map(|s| mask_api_key(&s)),
         "openai_transcribe_model" => config.openai_transcribe_model,
+        "transcribe_prompt" => config.transcribe_prompt,
+        "transcribe_language" => config.transcribe_language,
         "duration" => config.duration,
         "max_duration" => config.max_duration,
         "clipboard" => config.clipboard.map(|b| b.to_string()),
@@ -277,6 +281,14 @@ async fn handle_list<S: ConfigStore>(store: &S, presenter: &Presenter) -> Result
         (
             "openai_transcribe_model".to_string(),
             config.openai_transcribe_model.clone(),
+        ),
+        (
+            "transcribe_prompt".to_string(),
+            config.transcribe_prompt.clone(),
+        ),
+        (
+            "transcribe_language".to_string(),
+            config.transcribe_language.clone(),
         ),
         ("duration".to_string(), config.duration.clone()),
         ("max_duration".to_string(), config.max_duration.clone()),
@@ -390,6 +402,28 @@ fn validate_config_value(key: &str, value: &str) -> Result<(), ConfigError> {
                 return Err(ConfigError::ValidationError {
                     key: key.to_string(),
                     message: "Model name cannot be empty".to_string(),
+                });
+            }
+        }
+        "transcribe_language" => {
+            let v = value.trim();
+            // ISO 639-1 is 2 letters; we allow 2-3 letters to also accept
+            // 639-3 codes some users might pass.
+            if !v.is_empty() && (v.len() > 8 || !v.chars().all(|c| c.is_ascii_alphabetic())) {
+                return Err(ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: "Language must be an ISO 639-1/639-3 code (e.g. en, es, fr)"
+                        .to_string(),
+                });
+            }
+        }
+        "transcribe_prompt" => {
+            // Anything non-empty up to a sensible bound. OpenAI accepts long
+            // prompts on gpt-4o models; whisper-1 truncates to 224 tokens.
+            if value.len() > 4096 {
+                return Err(ConfigError::ValidationError {
+                    key: key.to_string(),
+                    message: "Prompt is too long (max 4096 chars)".to_string(),
                 });
             }
         }

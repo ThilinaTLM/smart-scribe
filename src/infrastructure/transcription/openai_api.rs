@@ -13,6 +13,8 @@ const TRANSCRIBE_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
 pub struct OpenAiApiTranscriber {
     api_key: String,
     model: String,
+    prompt: Option<String>,
+    language: Option<String>,
     client: reqwest::Client,
 }
 
@@ -21,26 +23,22 @@ impl OpenAiApiTranscriber {
         Self {
             api_key: api_key.into(),
             model: model.into(),
+            prompt: None,
+            language: None,
             client: reqwest::Client::new(),
         }
     }
 
-    /// Overload for tests / custom deployments.
-    #[cfg(test)]
-    pub fn with_endpoint(
-        api_key: impl Into<String>,
-        model: impl Into<String>,
-        endpoint: impl Into<String>,
-    ) -> Self {
-        // The constant is replaced via Self::endpoint() in tests, but reqwest
-        // uses the constant directly elsewhere. Test client just supplies its
-        // own client via an instance variable.
-        let _ = endpoint.into();
-        Self {
-            api_key: api_key.into(),
-            model: model.into(),
-            client: reqwest::Client::new(),
-        }
+    /// Builder: attach a transcription prompt (OpenAI's documented accuracy lever).
+    pub fn with_prompt(mut self, prompt: Option<String>) -> Self {
+        self.prompt = prompt.filter(|s| !s.trim().is_empty());
+        self
+    }
+
+    /// Builder: attach an ISO 639-1 language hint.
+    pub fn with_language(mut self, language: Option<String>) -> Self {
+        self.language = language.filter(|s| !s.trim().is_empty());
+        self
     }
 }
 
@@ -56,10 +54,16 @@ impl Transcriber for OpenAiApiTranscriber {
             .mime_str(mime_str)
             .map_err(|e| TranscriptionError::RequestFailed(e.to_string()))?;
 
-        let form = reqwest::multipart::Form::new()
+        let mut form = reqwest::multipart::Form::new()
             .part("file", file_part)
             .text("model", self.model.clone())
             .text("response_format", "json");
+        if let Some(prompt) = &self.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(language) = &self.language {
+            form = form.text("language", language.clone());
+        }
 
         let response = self
             .client
@@ -113,8 +117,25 @@ mod tests {
 
     #[test]
     fn builds_with_model_and_key() {
-        let t = OpenAiApiTranscriber::new("sk-test", "gpt-4o-mini-transcribe");
+        let t = OpenAiApiTranscriber::new("sk-test", "gpt-4o-transcribe");
         assert_eq!(t.api_key, "sk-test");
-        assert_eq!(t.model, "gpt-4o-mini-transcribe");
+        assert_eq!(t.model, "gpt-4o-transcribe");
+        assert!(t.prompt.is_none());
+        assert!(t.language.is_none());
+    }
+
+    #[test]
+    fn with_prompt_trims_and_drops_empty() {
+        let t = OpenAiApiTranscriber::new("k", "m")
+            .with_prompt(Some("   ".into()))
+            .with_language(Some("".into()));
+        assert!(t.prompt.is_none());
+        assert!(t.language.is_none());
+
+        let t = OpenAiApiTranscriber::new("k", "m")
+            .with_prompt(Some("Rust, OAuth".into()))
+            .with_language(Some("en".into()));
+        assert_eq!(t.prompt.as_deref(), Some("Rust, OAuth"));
+        assert_eq!(t.language.as_deref(), Some("en"));
     }
 }

@@ -188,6 +188,18 @@ pub async fn run_auth_status(config: &AppConfig, output: OutputFormatArg) -> Exi
 /// (`Keystroke: using ...`, `Paste: using ...`).
 pub fn describe_auth(config: &AppConfig) -> String {
     let model = config.openai_transcribe_model_or_default();
+    let mut extras = Vec::new();
+    if let Some(lang) = config.transcribe_language_some() {
+        extras.push(format!("lang: {lang}"));
+    }
+    if config.transcribe_prompt_some().is_some() {
+        extras.push("prompt: set".to_string());
+    }
+    let extra_suffix = if extras.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", extras.join(", "))
+    };
     match config.auth_or_default() {
         AuthMode::Oauth => {
             let store = match OAuthStore::new() {
@@ -207,25 +219,27 @@ pub fn describe_auth(config: &AppConfig) -> String {
                     let expires_in = tok.expires_at_unix - now;
                     if expires_in > 0 {
                         format!(
-                            "Auth: ChatGPT subscription (model: {}, token valid for {})",
+                            "Auth: ChatGPT subscription (model: {}{}, token valid for {})",
                             model,
+                            extra_suffix,
                             format_seconds(expires_in)
                         )
                     } else {
                         format!(
-                            "Auth: ChatGPT subscription (model: {}, token expired {} ago, will refresh)",
+                            "Auth: ChatGPT subscription (model: {}{}, token expired {} ago, will refresh)",
                             model,
+                            extra_suffix,
                             format_seconds(-expires_in)
                         )
                     }
                 }
                 None => format!(
-                    "Auth: ChatGPT subscription (model: {model}, no token cached \u{2014} run `smart-scribe login`)"
+                    "Auth: ChatGPT subscription (model: {model}{extra_suffix}, no token cached \u{2014} run `smart-scribe login`)"
                 ),
             }
         }
         AuthMode::ApiKey => {
-            format!("Auth: OpenAI API key (model: {model})")
+            format!("Auth: OpenAI API key (model: {model}{extra_suffix})")
         }
     }
 }

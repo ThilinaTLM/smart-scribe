@@ -46,8 +46,13 @@ impl FromStr for AuthMode {
     }
 }
 
-/// Default transcription model when using the OpenAI API.
-pub const DEFAULT_OPENAI_TRANSCRIBE_MODEL: &str = "gpt-4o-mini-transcribe";
+/// Default transcription model.
+///
+/// `gpt-4o-transcribe` is OpenAI's highest-accuracy speech-to-text model
+/// (lower word error rate than `whisper-1` and `gpt-4o-mini-transcribe`).
+/// Both auth paths accept it; OAuth users pay nothing extra, API-key users
+/// pay the same per-minute rate as `whisper-1`.
+pub const DEFAULT_OPENAI_TRANSCRIBE_MODEL: &str = "gpt-4o-transcribe";
 
 /// Linux-specific configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -75,8 +80,18 @@ pub struct AppConfig {
     pub auth: Option<String>,
     /// OpenAI API key, used when `auth = "api_key"`.
     pub openai_api_key: Option<String>,
-    /// Transcription model for the OpenAI API (e.g. `gpt-4o-mini-transcribe`).
+    /// Transcription model. Applies to both auth modes; the OAuth
+    /// `/backend-api/transcribe` endpoint accepts the same `model` field as
+    /// the public API.
     pub openai_transcribe_model: Option<String>,
+    /// Optional prompt sent as the `prompt` form field. Per OpenAI's docs
+    /// this is the most effective lever for fixing proper nouns and
+    /// jargon. Keep it short; ~224 tokens max on whisper-1.
+    pub transcribe_prompt: Option<String>,
+    /// Optional ISO 639-1 language hint (`en`, `es`, ...) sent as the
+    /// `language` form field. Improves accuracy and reduces hallucination,
+    /// especially on short audio. Leave unset for auto-detect.
+    pub transcribe_language: Option<String>,
     pub duration: Option<String>,
     pub max_duration: Option<String>,
     pub clipboard: Option<bool>,
@@ -94,6 +109,8 @@ impl AppConfig {
             auth: Some(AuthMode::default().to_string()),
             openai_api_key: None,
             openai_transcribe_model: Some(DEFAULT_OPENAI_TRANSCRIBE_MODEL.to_string()),
+            transcribe_prompt: None,
+            transcribe_language: None,
             duration: None,
             max_duration: None,
             clipboard: Some(false),
@@ -127,6 +144,8 @@ impl AppConfig {
             openai_transcribe_model: other
                 .openai_transcribe_model
                 .or(self.openai_transcribe_model),
+            transcribe_prompt: other.transcribe_prompt.or(self.transcribe_prompt),
+            transcribe_language: other.transcribe_language.or(self.transcribe_language),
             duration: other.duration.or(self.duration),
             max_duration: other.max_duration.or(self.max_duration),
             clipboard: other.clipboard.or(self.clipboard),
@@ -186,6 +205,22 @@ impl AppConfig {
         self.openai_transcribe_model
             .as_deref()
             .unwrap_or(DEFAULT_OPENAI_TRANSCRIBE_MODEL)
+    }
+
+    /// Get the optional transcribe prompt, treating empty as None.
+    pub fn transcribe_prompt_some(&self) -> Option<&str> {
+        self.transcribe_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Get the optional language hint, lower-cased and trimmed.
+    pub fn transcribe_language_some(&self) -> Option<&str> {
+        self.transcribe_language
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 
     /// Get duration as parsed Duration, or default if not set/invalid

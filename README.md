@@ -61,24 +61,37 @@ export OPENAI_API_KEY=sk-...          # or: smart-scribe config set openai_api_k
 smart-scribe -d 10s
 ```
 
-The default model is `gpt-4o-mini-transcribe`. Change it with:
+The default model is `gpt-4o-transcribe` — OpenAI's highest-accuracy
+speech-to-text model. The same key applies to **both** auth modes; the OAuth
+`/backend-api/transcribe` endpoint also accepts the `model` form field.
+
+| Model                       | Notes                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| `gpt-4o-transcribe`         | **Default.** Best accuracy on proper nouns and jargon.                                      |
+| `gpt-4o-mini-transcribe`    | Half the price (API path). Slightly lower accuracy.                                         |
+| `whisper-1`                 | Classic Whisper. Only model that supports word-level timestamps (API path).                 |
+| `gpt-4o-transcribe-diarize` | Speaker labels. API-path only; requires `chunking_strategy` for >30s audio; no prompts.     |
 
 ```bash
 smart-scribe config set openai_transcribe_model gpt-4o-transcribe
 ```
 
-The same key applies to **both** auth modes — the OAuth path also accepts a
-`model` form field on `/backend-api/transcribe`. Empirically:
+### Accuracy hints
 
-| Model                    | Notes                                              |
-| ------------------------ | -------------------------------------------------- |
-| `gpt-4o-mini-transcribe` | Default. Fast and cheap; lossy on proper nouns.    |
-| `gpt-4o-transcribe`      | Higher quality (best at brand names & jargon).     |
-| `whisper-1`              | Classic Whisper; surprisingly competitive.         |
+Two optional config keys map to documented OpenAI parameters and apply to
+**both** auth modes:
 
-On the API-key path these are billed normally. On the OAuth path they cost
-nothing extra beyond your ChatGPT subscription, so `gpt-4o-transcribe` is
-often the best choice.
+```bash
+# Comma-separated terms / context. Per the OpenAI docs this is the single most
+# effective lever for fixing proper nouns and acronyms.
+smart-scribe config set transcribe_prompt "Rust, OAuth, Codex, ChatGPT, Cloudflare"
+
+# ISO 639-1 language hint. Reduces hallucination on short audio.
+smart-scribe config set transcribe_language en
+```
+
+Note: the OAuth path accepts these fields but appears to weight them less
+than the API path; both are still safe to set.
 
 ## Auth modes
 
