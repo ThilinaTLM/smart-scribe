@@ -180,6 +180,53 @@ pub async fn run_auth_status(config: &AppConfig, output: OutputFormatArg) -> Exi
     ExitCode::from(EXIT_OK)
 }
 
+/// Build a one-line auth-status banner for the startup logs (one-shot and daemon).
+///
+/// For OAuth this peeks at the cached token to surface its remaining lifetime
+/// without forcing a refresh; for the API-key path it surfaces the configured
+/// model. Output goes to stderr alongside the other startup lines
+/// (`Keystroke: using ...`, `Paste: using ...`).
+pub fn describe_auth(config: &AppConfig) -> String {
+    match config.auth_or_default() {
+        AuthMode::Oauth => {
+            let store = match OAuthStore::new() {
+                Ok(s) => s,
+                Err(_) => return "Auth: ChatGPT subscription (token store unavailable)".into(),
+            };
+            match store.load().ok().flatten() {
+                Some(tok) => {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let expires_in = tok.expires_at_unix - now;
+                    if expires_in > 0 {
+                        format!(
+                            "Auth: ChatGPT subscription (token valid for {})",
+                            format_seconds(expires_in)
+                        )
+                    } else {
+                        format!(
+                            "Auth: ChatGPT subscription (token expired {} ago, will refresh)",
+                            format_seconds(-expires_in)
+                        )
+                    }
+                }
+                None => {
+                    "Auth: ChatGPT subscription (no token cached \u{2014} run `smart-scribe login`)"
+                        .into()
+                }
+            }
+        }
+        AuthMode::ApiKey => {
+            format!(
+                "Auth: OpenAI API key (model: {})",
+                config.openai_transcribe_model_or_default()
+            )
+        }
+    }
+}
+
 fn format_seconds(secs: i64) -> String {
     let abs = secs.unsigned_abs();
     if abs >= 86_400 {
@@ -196,6 +243,30 @@ fn format_seconds(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::domain::config::AuthMode;
+
+    #[test]
+    fn describe_auth_api_key_mentions_model() {
+        let mut cfg = AppConfig::empty();
+        cfg.auth = Some(AuthMode::ApiKey.to_string());
+        cfg.openai_transcribe_model = Some("whisper-1".into());
+        let line = describe_auth(&cfg);
+        assert!(line.starts_with("Auth: OpenAI API key"));
+        assert!(line.contains("whisper-1"), "got: {line}");
+    }
+
+    #[test]
+    fn describe_auth_oauth_default_mentions_subscription() {
+        // No token will typically be present in the test env. The banner
+        // should still mention the ChatGPT subscription path.
+        let cfg = AppConfig::empty();
+        let line = describe_auth(&cfg);
+        assert!(
+            line.starts_with("Auth: ChatGPT subscription"),
+            "got: {line}"
+        );
+    }
 
     #[test]
     fn format_seconds_units() {

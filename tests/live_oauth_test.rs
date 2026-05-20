@@ -23,9 +23,8 @@ async fn transcribe_with_oauth_against_chatgpt_backend() {
         );
     }
 
-    let audio_path = std::env::var("SMART_SCRIBE_TEST_AUDIO").unwrap_or_else(|_| {
-        panic!("SMART_SCRIBE_TEST_AUDIO env var must point at a FLAC file")
-    });
+    let audio_path = std::env::var("SMART_SCRIBE_TEST_AUDIO")
+        .unwrap_or_else(|_| panic!("SMART_SCRIBE_TEST_AUDIO env var must point at a FLAC file"));
     let bytes = std::fs::read(&audio_path).expect("read audio file");
     let audio = AudioData::new(bytes, AudioMimeType::Flac).with_duration_ms(5_000);
 

@@ -22,6 +22,7 @@ use crate::infrastructure::{
 };
 
 use super::args::TranscribeOptions;
+use super::auth_cmd::describe_auth;
 use super::output::OneshotResponse;
 use super::presenter::Presenter;
 use super::signals::DaemonSignalHandler;
@@ -88,6 +89,7 @@ pub async fn run_oneshot(options: TranscribeOptions, config: &AppConfig) -> Exit
             return ExitCode::from(EXIT_ERROR);
         }
     };
+    eprintln!("{}", describe_auth(config));
 
     // Create adapters (using cross-platform implementations)
     let recorder = create_recorder();
