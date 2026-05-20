@@ -19,21 +19,33 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
 const REFRESH_LEAD_SECS: i64 = 60;
 
 /// ChatGPT transcriber using a bearer token from the OAuth flow.
+///
+/// The model is selected via the `model` multipart field. Empirically the
+/// `/backend-api/transcribe` endpoint accepts `whisper-1`,
+/// `gpt-4o-transcribe`, and `gpt-4o-mini-transcribe`, silently falling back
+/// to the server default for unknown values. `gpt-4o-transcribe` is
+/// noticeably more accurate on technical terms.
 pub struct ChatGptOAuthTranscriber {
     store: OAuthStore,
     client: reqwest::Client,
     device_id: String,
+    model: String,
     cached: Mutex<Option<OAuthToken>>,
 }
 
 impl ChatGptOAuthTranscriber {
-    pub fn new(store: OAuthStore) -> Self {
+    pub fn new(store: OAuthStore, model: impl Into<String>) -> Self {
         Self {
             store,
             client: reqwest::Client::new(),
             device_id: Uuid::new_v4().to_string(),
+            model: model.into(),
             cached: Mutex::new(None),
         }
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
     }
 
     /// Ensure we have a non-expired access token, refreshing and persisting as
@@ -88,7 +100,7 @@ impl ChatGptOAuthTranscriber {
 
     async fn do_transcribe(&self, audio: &AudioData) -> Result<String, TranscriptionError> {
         let token = self.current_token().await?;
-        send_transcribe(&self.client, &token, &self.device_id, audio).await
+        send_transcribe(&self.client, &token, &self.device_id, &self.model, audio).await
     }
 }
 
@@ -96,6 +108,7 @@ async fn send_transcribe(
     client: &reqwest::Client,
     token: &OAuthToken,
     device_id: &str,
+    model: &str,
     audio: &AudioData,
 ) -> Result<String, TranscriptionError> {
     let mime_str = audio.mime_type().as_str();
@@ -115,7 +128,8 @@ async fn send_transcribe(
 
     let form = reqwest::multipart::Form::new()
         .part("file", file_part)
-        .text("duration_ms", duration_ms.to_string());
+        .text("duration_ms", duration_ms.to_string())
+        .text("model", model.to_string());
 
     let response = client
         .post(TRANSCRIBE_URL)
@@ -227,7 +241,7 @@ mod tests {
     async fn returns_not_authenticated_when_store_empty() {
         let dir = tempdir().unwrap();
         let store = OAuthStore::with_path(dir.path().join("oauth.json"));
-        let t = ChatGptOAuthTranscriber::new(store);
+        let t = ChatGptOAuthTranscriber::new(store, "gpt-4o-transcribe");
         let audio = AudioData::new(vec![0u8; 8], AudioMimeType::Flac);
         let err = t.transcribe(&audio).await.unwrap_err();
         assert!(matches!(err, TranscriptionError::NotAuthenticated));
@@ -236,11 +250,19 @@ mod tests {
     #[tokio::test]
     async fn current_token_loads_from_store_and_caches() {
         let (_dir, store) = make_store_with_token();
-        let t = ChatGptOAuthTranscriber::new(store);
+        let t = ChatGptOAuthTranscriber::new(store, "gpt-4o-transcribe");
         let tok = t.current_token().await.unwrap();
         assert_eq!(tok.access_token, "access-1");
         // Subsequent call should still succeed from cache (no network).
         let tok2 = t.current_token().await.unwrap();
         assert_eq!(tok2.access_token, "access-1");
+    }
+
+    #[test]
+    fn new_records_model() {
+        let dir = tempdir().unwrap();
+        let store = OAuthStore::with_path(dir.path().join("oauth.json"));
+        let t = ChatGptOAuthTranscriber::new(store, "whisper-1");
+        assert_eq!(t.model(), "whisper-1");
     }
 }

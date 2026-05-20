@@ -61,18 +61,31 @@ export OPENAI_API_KEY=sk-...          # or: smart-scribe config set openai_api_k
 smart-scribe -d 10s
 ```
 
-The API path uses `gpt-4o-mini-transcribe` by default — change with:
+The default model is `gpt-4o-mini-transcribe`. Change it with:
 
 ```bash
-smart-scribe config set openai_transcribe_model whisper-1
+smart-scribe config set openai_transcribe_model gpt-4o-transcribe
 ```
+
+The same key applies to **both** auth modes — the OAuth path also accepts a
+`model` form field on `/backend-api/transcribe`. Empirically:
+
+| Model                    | Notes                                              |
+| ------------------------ | -------------------------------------------------- |
+| `gpt-4o-mini-transcribe` | Default. Fast and cheap; lossy on proper nouns.    |
+| `gpt-4o-transcribe`      | Higher quality (best at brand names & jargon).     |
+| `whisper-1`              | Classic Whisper; surprisingly competitive.         |
+
+On the API-key path these are billed normally. On the OAuth path they cost
+nothing extra beyond your ChatGPT subscription, so `gpt-4o-transcribe` is
+often the best choice.
 
 ## Auth modes
 
-| Mode      | Endpoint                                  | Credential         | Billing                          |
-| --------- | ----------------------------------------- | ------------------ | -------------------------------- |
-| `oauth`   | `chatgpt.com/backend-api/transcribe`      | OAuth Bearer token | Counts against ChatGPT subscription |
-| `api_key` | `api.openai.com/v1/audio/transcriptions`  | `OPENAI_API_KEY`   | Metered per-minute API usage    |
+| Mode      | Endpoint                                  | Credential         | Billing                          | Model selection                          |
+| --------- | ----------------------------------------- | ------------------ | -------------------------------- | ---------------------------------------- |
+| `oauth`   | `chatgpt.com/backend-api/transcribe`      | OAuth Bearer token | Counts against ChatGPT subscription | `whisper-1` / `gpt-4o-(mini-)?transcribe` |
+| `api_key` | `api.openai.com/v1/audio/transcriptions`  | `OPENAI_API_KEY`   | Metered per-minute API usage    | Any model documented by OpenAI            |
 
 > **Note on OAuth:** smart-scribe authenticates against `auth.openai.com` using the public OpenAI Codex CLI OAuth client. OpenAI has not (yet) opened that client registry to third parties, so the browser consent screen will show "Codex CLI". This is the same approach used by community tools like `term-llm`, `openhands`, and others. If OpenAI tightens the policy in the future the `api_key` path will continue to work.
 

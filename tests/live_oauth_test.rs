@@ -28,7 +28,9 @@ async fn transcribe_with_oauth_against_chatgpt_backend() {
     let bytes = std::fs::read(&audio_path).expect("read audio file");
     let audio = AudioData::new(bytes, AudioMimeType::Flac).with_duration_ms(5_000);
 
-    let transcriber = ChatGptOAuthTranscriber::new(store);
+    let model = std::env::var("SMART_SCRIBE_TEST_MODEL")
+        .unwrap_or_else(|_| "gpt-4o-transcribe".to_string());
+    let transcriber = ChatGptOAuthTranscriber::new(store, model);
     let text = transcriber
         .transcribe(&audio)
         .await

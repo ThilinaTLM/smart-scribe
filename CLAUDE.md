@@ -56,7 +56,7 @@ Config priority: CLI args > environment > `config.toml` > defaults.
 | --------------------------- | --------------------------------------------- |
 | `auth`                      | `oauth` (default) or `api_key`                |
 | `openai_api_key`            | Used when `auth = "api_key"`                  |
-| `openai_transcribe_model`   | Default `gpt-4o-mini-transcribe`              |
+| `openai_transcribe_model`   | Default `gpt-4o-mini-transcribe`. Applies to **both** auth modes: the OAuth `/backend-api/transcribe` endpoint accepts `model` as a multipart field (verified accepting `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`; unknown values silently fall back to the server default). |
 | `duration`, `max_duration`  | e.g. `30s`, `1m`, `2m30s`                     |
 | `clipboard`, `keystroke`, `notify`, `audio_cue` | booleans                  |
 | `linux.*`, `windows.*`      | Platform-specific subtables (portable schema) |

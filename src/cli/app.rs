@@ -52,11 +52,14 @@ impl Transcriber for AnyTranscriber {
 /// disk — the missing-token error is surfaced at the first transcribe call so
 /// that `smart-scribe login` can still be used to populate it.
 pub fn create_transcriber(config: &AppConfig) -> Result<AnyTranscriber, String> {
+    let model = config.openai_transcribe_model_or_default().to_string();
     match config.auth_or_default() {
         AuthMode::Oauth => {
             let store = OAuthStore::new()
                 .map_err(|e| format!("Could not initialize OAuth token store: {e}"))?;
-            Ok(AnyTranscriber::Oauth(ChatGptOAuthTranscriber::new(store)))
+            Ok(AnyTranscriber::Oauth(ChatGptOAuthTranscriber::new(
+                store, model,
+            )))
         }
         AuthMode::ApiKey => {
             let api_key = config.openai_api_key.as_ref().ok_or_else(|| {
@@ -64,7 +67,6 @@ pub fn create_transcriber(config: &AppConfig) -> Result<AnyTranscriber, String> 
                  'smart-scribe config set openai_api_key <key>'."
                     .to_string()
             })?;
-            let model = config.openai_transcribe_model_or_default().to_string();
             Ok(AnyTranscriber::ApiKey(OpenAiApiTranscriber::new(
                 api_key, model,
             )))

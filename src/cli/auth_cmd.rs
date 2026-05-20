@@ -187,11 +187,16 @@ pub async fn run_auth_status(config: &AppConfig, output: OutputFormatArg) -> Exi
 /// model. Output goes to stderr alongside the other startup lines
 /// (`Keystroke: using ...`, `Paste: using ...`).
 pub fn describe_auth(config: &AppConfig) -> String {
+    let model = config.openai_transcribe_model_or_default();
     match config.auth_or_default() {
         AuthMode::Oauth => {
             let store = match OAuthStore::new() {
                 Ok(s) => s,
-                Err(_) => return "Auth: ChatGPT subscription (token store unavailable)".into(),
+                Err(_) => {
+                    return format!(
+                        "Auth: ChatGPT subscription (model: {model}, token store unavailable)"
+                    )
+                }
             };
             match store.load().ok().flatten() {
                 Some(tok) => {
@@ -202,27 +207,25 @@ pub fn describe_auth(config: &AppConfig) -> String {
                     let expires_in = tok.expires_at_unix - now;
                     if expires_in > 0 {
                         format!(
-                            "Auth: ChatGPT subscription (token valid for {})",
+                            "Auth: ChatGPT subscription (model: {}, token valid for {})",
+                            model,
                             format_seconds(expires_in)
                         )
                     } else {
                         format!(
-                            "Auth: ChatGPT subscription (token expired {} ago, will refresh)",
+                            "Auth: ChatGPT subscription (model: {}, token expired {} ago, will refresh)",
+                            model,
                             format_seconds(-expires_in)
                         )
                     }
                 }
-                None => {
-                    "Auth: ChatGPT subscription (no token cached \u{2014} run `smart-scribe login`)"
-                        .into()
-                }
+                None => format!(
+                    "Auth: ChatGPT subscription (model: {model}, no token cached \u{2014} run `smart-scribe login`)"
+                ),
             }
         }
         AuthMode::ApiKey => {
-            format!(
-                "Auth: OpenAI API key (model: {})",
-                config.openai_transcribe_model_or_default()
-            )
+            format!("Auth: OpenAI API key (model: {model})")
         }
     }
 }
@@ -257,15 +260,17 @@ mod tests {
     }
 
     #[test]
-    fn describe_auth_oauth_default_mentions_subscription() {
+    fn describe_auth_oauth_default_mentions_subscription_and_model() {
         // No token will typically be present in the test env. The banner
-        // should still mention the ChatGPT subscription path.
-        let cfg = AppConfig::empty();
+        // should still mention the ChatGPT subscription path and selected model.
+        let mut cfg = AppConfig::empty();
+        cfg.openai_transcribe_model = Some("gpt-4o-transcribe".into());
         let line = describe_auth(&cfg);
         assert!(
             line.starts_with("Auth: ChatGPT subscription"),
             "got: {line}"
         );
+        assert!(line.contains("gpt-4o-transcribe"), "got: {line}");
     }
 
     #[test]
